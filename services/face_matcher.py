@@ -7,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import NamedTuple
 
-from deepface import DeepFace
 from sqlalchemy.orm import Session
 
 from core.settings import settings
@@ -66,6 +65,12 @@ def _validate_image_path(image_path: str) -> None:
 
 
 def _embedding_for_selfie(image_path: str) -> list[float]:
+    # Imported here, not at module level: this module is imported by both
+    # the api process (via job_service) and the worker process, but only
+    # the worker ever actually calls into DeepFace. A module-level import
+    # would make the api process pay TensorFlow's import cost for nothing.
+    from deepface import DeepFace
+
     try:
         result = DeepFace.represent(
             img_path=image_path,
@@ -88,6 +93,8 @@ def _embedding_for_selfie(image_path: str) -> list[float]:
 
 
 def _embedding_for_event_photo(image_path: str) -> list[float]:
+    from deepface import DeepFace
+
     try:
         result = DeepFace.represent(
             img_path=image_path,

@@ -7,4 +7,6 @@ deepface
 tf-keras
 mtcnn
 opencv-python
+redis
+rq
 numpy

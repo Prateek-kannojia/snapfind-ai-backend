@@ -10,10 +10,10 @@ from db.database import get_db
 from api.schemas import JobSummaryResponse, MatchListResponse, UploadJobResponse
 from services.job_service import (
     JobServiceError,
+    enqueue_job_processing,
     get_job_detail,
     get_job_matches,
     get_match_file,
-    process_job,
 )
 from services.upload_service import UploadValidationError, create_upload_job
 
@@ -49,7 +49,7 @@ def process_uploaded_job(
     db: Session = Depends(get_db),
 ) -> JobSummaryResponse:
     try:
-        return process_job(db=db, job_id=job_id, threshold=threshold)
+        return enqueue_job_processing(db=db, job_id=job_id, threshold=threshold)
     except JobServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 

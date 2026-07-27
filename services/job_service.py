@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import delete as sql_delete, select
+from sqlalchemy import delete as sql_delete, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from api.schemas import (
@@ -10,8 +11,11 @@ from api.schemas import (
     MatchListResponse,
     MatchedPhotoResponse,
 )
+from core.settings import settings
+from db.database import SessionLocal
 from db.orm_models import JobStatus, MatchedPhoto, UploadJob
 from services.face_matcher import build_matches_for_job
+from services.queue_service import enqueue_face_matching_job
 
 
 class JobServiceError(Exception):
@@ -60,6 +64,17 @@ def _get_match_or_raise(db: Session, job_id: str, match_id: int) -> MatchedPhoto
     return match
 
 
+def _set_job_status(db: Session, job: UploadJob, status: JobStatus) -> None:
+    job.status = status
+    db.flush()
+
+
+def _replace_job_matches(db: Session, job: UploadJob, matches: list[MatchedPhoto]) -> None:
+    db.execute(sql_delete(MatchedPhoto).where(MatchedPhoto.job_id == job.id))
+    db.flush()
+    db.add_all(matches)
+
+
 def _build_job_summary_response(job: UploadJob) -> JobSummaryResponse:
     return JobSummaryResponse(
         job_id=job.id,
@@ -91,37 +106,140 @@ def _build_match_list_response(job: UploadJob) -> MatchListResponse:
     )
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _stale_cutoff() -> datetime:
+    return _utc_now() - timedelta(seconds=settings.job_stale_after_seconds)
+
+
+def _mark_job_failed(db: Session, job_id: str, error: str | None = None) -> None:
+    db.rollback()
+    job = _load_job(db, job_id)
+    if job is None:
+        return
+    job.status = JobStatus.failed
+    job.last_error = error
+    db.commit()
+
+
 def get_job_detail(db: Session, job_id: str) -> JobSummaryResponse:
     job = _get_job_or_raise(db, job_id)
     return _build_job_summary_response(job)
 
 
-def process_job(db: Session, job_id: str, threshold: float) -> JobSummaryResponse:
-    """Runs face matching synchronously, inside the request. Fine for a
-    handful of test photos; a bigger album will block the HTTP connection
-    for the whole run."""
+def enqueue_job_processing(db: Session, job_id: str, threshold: float) -> JobSummaryResponse:
+    """Mark a job as queued, enqueue it in RQ, and return immediately."""
+    now = _utc_now()
+    stale_cutoff = _stale_cutoff()
+    result = db.execute(
+        update(UploadJob)
+        .where(
+            UploadJob.id == job_id,
+            or_(
+                UploadJob.status.not_in([JobStatus.queued, JobStatus.processing]),
+                (
+                    (UploadJob.status == JobStatus.queued)
+                    & (
+                        (UploadJob.queued_at.is_(None))
+                        | (UploadJob.queued_at < stale_cutoff)
+                    )
+                ),
+                (
+                    (UploadJob.status == JobStatus.processing)
+                    & (
+                        (UploadJob.processing_started_at.is_(None))
+                        | (UploadJob.processing_started_at < stale_cutoff)
+                    )
+                ),
+            ),
+        )
+        .values(
+            status=JobStatus.queued,
+            queued_at=now,
+            processing_started_at=None,
+            rq_job_id=None,
+            last_error=None,
+        )
+    )
+    db.flush()
+    db.expire_all()
+
+    if result.rowcount == 0:
+        job = _load_job(db, job_id)
+        if job is None:
+            raise JobNotFoundError()
+        if job.status == JobStatus.queued:
+            raise JobServiceError("Job is already queued for processing", status_code=409)
+        raise JobServiceError("Job is currently being processed", status_code=409)
+
     job = _get_job_or_raise(db, job_id)
     if not job.event_photos:
+        db.rollback()
         raise JobServiceError("Job has no event photos to process")
 
-    job.status = JobStatus.processing
     db.commit()
-
     try:
-        matches = build_matches_for_job(db, job, list(job.event_photos), threshold)
-        db.execute(sql_delete(MatchedPhoto).where(MatchedPhoto.job_id == job.id))
-        db.add_all(matches)
-        job.status = JobStatus.completed
-        db.commit()
+        rq_job_id = enqueue_face_matching_job(job_id=job_id, threshold=threshold)
     except Exception as exc:
         db.rollback()
         job = _get_job_or_raise(db, job_id)
-        job.status = JobStatus.failed
+        job.status = JobStatus.pending
+        job.queued_at = None
+        job.rq_job_id = None
         db.commit()
-        raise JobServiceError(f"Face matching failed: {exc}") from exc
+        raise JobServiceError(
+            "Could not enqueue job for processing. Is Redis running?",
+            status_code=503,
+        ) from exc
 
+    job = _get_job_or_raise(db, job_id)
+    job.rq_job_id = rq_job_id
+    db.commit()
     db.refresh(job)
     return _build_job_summary_response(job)
+
+
+def _claim_queued_job(db: Session, job_id: str) -> UploadJob | None:
+    result = db.execute(
+        update(UploadJob)
+        .where(UploadJob.id == job_id, UploadJob.status == JobStatus.queued)
+        .values(status=JobStatus.processing, processing_started_at=_utc_now())
+    )
+    db.flush()
+    db.expire_all()
+
+    if result.rowcount == 0:
+        return None
+
+    job = _get_job_or_raise(db, job_id)
+    if not job.event_photos:
+        job.status = JobStatus.failed
+        job.last_error = "Job has no event photos to process"
+        db.commit()
+        return None
+
+    db.commit()
+    return _get_job_or_raise(db, job_id)
+
+
+def run_job_processing(job_id: str, threshold: float) -> None:
+    """RQ worker task. Owns its own DB session and runs outside the API process."""
+    db = SessionLocal()
+    try:
+        job = _claim_queued_job(db, job_id)
+        if job is None:
+            return
+        matches = build_matches_for_job(db, job, list(job.event_photos), threshold)
+        _replace_job_matches(db, job, matches)
+        job.last_error = None
+        _set_job_status(db, job, JobStatus.completed)
+        db.commit()
+    except Exception as exc:
+        _mark_job_failed(db, job_id, str(exc))
+    finally:
+        db.close()
 
 
 def get_job_matches(db: Session, job_id: str) -> MatchListResponse:

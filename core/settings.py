@@ -25,6 +25,13 @@ class Settings:
         self.selfie_detector = os.getenv("SELFIE_DETECTOR", "mtcnn")
         self.event_photo_detector = os.getenv("EVENT_PHOTO_DETECTOR", "opencv")
         self.face_match_workers = int(os.getenv("FACE_MATCH_WORKERS", "4"))
+        self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        self.rq_queue_name = os.getenv("RQ_QUEUE_NAME", "face-matching")
+        self.rq_job_timeout_seconds = int(os.getenv("RQ_JOB_TIMEOUT_SECONDS", "1800"))
+        self.rq_worker_class = os.getenv(
+            "RQ_WORKER_CLASS", "simple" if os.name == "nt" else "default"
+        )
+        self.job_stale_after_seconds = int(os.getenv("JOB_STALE_AFTER_SECONDS", "3600"))
 
 
 settings = Settings()

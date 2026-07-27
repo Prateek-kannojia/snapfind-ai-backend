@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 from api.routes import router as photo_router
 from api.schemas import HealthResponse
-from db.database import Base, engine
+from db.database import Base, engine, ensure_runtime_schema
 from db import orm_models as db_models  # noqa: F401
 
 app = FastAPI(
@@ -15,6 +15,7 @@ app = FastAPI(
 @app.on_event("startup")
 def on_startup() -> None:
     Base.metadata.create_all(bind=engine)
+    ensure_runtime_schema()
 
 
 @app.get("/", response_model=HealthResponse)

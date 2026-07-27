@@ -12,6 +12,7 @@ from db.database import Base
 
 class JobStatus(str, Enum):
     pending = "pending"
+    queued = "queued"
     processing = "processing"
     completed = "completed"
     failed = "failed"
@@ -28,6 +29,10 @@ class UploadJob(Base):
     selfie_storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
     event_photo_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rq_job_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     event_photos: Mapped[list["EventPhoto"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
