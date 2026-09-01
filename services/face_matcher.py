@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import NamedTuple
 
+import cv2
+import numpy as np
 from sqlalchemy.orm import Session
 
 from core.settings import settings
@@ -15,8 +17,32 @@ from db.orm_models import EventPhoto, MatchedPhoto, UploadJob
 # Set once at import time so every DeepFace call uses the right home directory.
 settings.deepface_home.mkdir(parents=True, exist_ok=True)
 os.environ["DEEPFACE_HOME"] = str(settings.deepface_home)
+settings.insightface_home.mkdir(parents=True, exist_ok=True)
+os.environ["INSIGHTFACE_HOME"] = str(settings.insightface_home)
 
 DEFAULT_MODEL = "ArcFace"
+
+# Lazily-built singleton. Built once (in build_matches_for_job, before the
+# thread pool starts, same warm-up pattern as the selfie embedding) and then
+# read-only from worker threads — onnxruntime InferenceSession.run() is
+# documented thread-safe for concurrent calls, so sharing one instance across
+# threads is safe once it's built.
+_insightface_app = None
+
+
+def _get_insightface_app():
+    global _insightface_app
+    if _insightface_app is None:
+        from insightface.app import FaceAnalysis
+
+        app = FaceAnalysis(
+            name="buffalo_sc",  # smallest/fastest pack: SCRFD-500MF detector
+            allowed_modules=["detection"],  # we only use detection; embedding stays DeepFace/ArcFace
+            root=str(settings.insightface_home),
+        )
+        app.prepare(ctx_id=-1, det_size=(settings.event_photo_max_dimension,) * 2)  # ctx_id=-1 = CPU
+        _insightface_app = app
+    return _insightface_app
 
 
 class FaceMatchError(Exception):
@@ -64,16 +90,61 @@ def _validate_image_path(image_path: str) -> None:
         )
 
 
-def _embedding_for_selfie(image_path: str) -> list[float]:
-    # Imported here, not at module level: this module is imported by both
-    # the api process (via job_service) and the worker process, but only
-    # the worker ever actually calls into DeepFace. A module-level import
-    # would make the api process pay TensorFlow's import cost for nothing.
+def _load_resized_image(image_path: str, max_dimension: int) -> np.ndarray:
+    """Load an image and shrink it so its longest side is at most max_dimension.
+
+    Detection + embedding cost scales with pixel count, and phone photos are
+    often 3000-4000px on the long side while faces only need a few hundred
+    pixels to detect and embed accurately. Downscaling here is the single
+    biggest, lowest-risk speedup available on CPU (see SUMMARY.md).
+    """
+    image = cv2.imread(image_path)
+    if image is None:
+        raise FaceMatchError(f"Could not read image file: {image_path}")
+
+    height, width = image.shape[:2]
+    longest_side = max(height, width)
+    if longest_side > max_dimension:
+        scale = max_dimension / longest_side
+        new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+        image = cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+
+    return image
+
+
+def _embedding_for_event_photo_fast(image_array: np.ndarray) -> list[float]:
+    """Detect + align with a lightweight ONNX detector (insightface SCRFD),
+    then embed with DeepFace's ArcFace via detector_backend="skip" since the
+    face is already cropped and aligned to the standard ArcFace convention.
+    """
+    from deepface import DeepFace
+    from insightface.utils import face_align
+
+    app = _get_insightface_app()
+    faces = app.get(image_array)
+    if not faces:
+        raise FaceMatchError("Could not detect a face in one of the event photos")
+
+    # Largest face = most prominent person in the photo. Matches how a
+    # single event photo is judged: is the target person visibly in it.
+    best = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+    aligned = face_align.norm_crop(image_array, best.kps, image_size=112, mode="arcface")
+
+    result = DeepFace.represent(
+        img_path=aligned, model_name=DEFAULT_MODEL, detector_backend="skip", enforce_detection=False
+    )
+    if not result:
+        raise FaceMatchError("Could not generate a face embedding for an event photo")
+    return result[0]["embedding"]
+
+
+def _embedding_for_selfie(image_array: np.ndarray) -> list[float]:
+    """Selfie path: DeepFace + mtcnn, unchanged since the MVP."""
     from deepface import DeepFace
 
     try:
         result = DeepFace.represent(
-            img_path=image_path,
+            img_path=image_array,
             model_name=DEFAULT_MODEL,
             detector_backend=settings.selfie_detector,
             enforce_detection=True,
@@ -92,29 +163,23 @@ def _embedding_for_selfie(image_path: str) -> list[float]:
     return result[0]["embedding"]
 
 
-def _embedding_for_event_photo(image_path: str) -> list[float]:
-    from deepface import DeepFace
-
-    try:
-        result = DeepFace.represent(
-            img_path=image_path,
-            model_name=DEFAULT_MODEL,
-            detector_backend=settings.event_photo_detector,
-            enforce_detection=True,
-        )
-    except Exception as exc:
-        raise FaceMatchError("Could not detect a face in one of the event photos") from exc
-
-    if not result:
-        raise FaceMatchError("Could not generate a face embedding for an event photo")
-    return result[0]["embedding"]
-
-
 def _embedding_for_image(image_path: str, *, is_selfie: bool) -> list[float]:
     _validate_image_path(image_path)
+
+    max_dimension = (
+        settings.selfie_max_dimension if is_selfie else settings.event_photo_max_dimension
+    )
+    image_array = _load_resized_image(image_path, max_dimension)
+
     if is_selfie:
-        return _embedding_for_selfie(image_path)
-    return _embedding_for_event_photo(image_path)
+        return _embedding_for_selfie(image_array)
+
+    try:
+        return _embedding_for_event_photo_fast(image_array)
+    except FaceMatchError:
+        raise
+    except Exception as exc:
+        raise FaceMatchError("Could not detect a face in one of the event photos") from exc
 
 
 def _process_single_photo(
@@ -140,7 +205,14 @@ def build_matches_for_job(
     if threshold <= 0:
         raise FaceMatchError("Threshold must be greater than 0")
 
+    # Compute selfie embedding first — this also warms the DeepFace model in
+    # memory so all worker threads find it already loaded.
     selfie_embedding = _embedding_for_image(job.selfie_storage_path, is_selfie=True)
+
+    # Same warm-up idea for the insightface detector used for event photos:
+    # build it once here (single-threaded) so worker threads only ever read
+    # from the already-built singleton, never race to build it concurrently.
+    _get_insightface_app()
 
     photos = [_Photo(p.id, p.storage_path, p.embedding) for p in event_photos]
     orm_by_id = {p.id: p for p in event_photos}

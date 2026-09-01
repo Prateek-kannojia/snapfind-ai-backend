@@ -6,7 +6,16 @@ python-multipart
 deepface
 tf-keras
 mtcnn
-opencv-python
+# Pinned: opencv-python 5.0.0 ships without cv2.CascadeClassifier / the
+# bundled haarcascade data files in its Windows wheel, which breaks
+# DeepFace's "opencv" detector backend entirely (used for event photos).
+# 4.10.0.84 is a known-good release that includes both.
+opencv-python==4.10.0.84
 redis
 rq
 numpy
+# Event-photo face detector (see README "Why insightface for event photos"):
+# a lightweight ONNX detector, ~45-50x faster than DeepFace's retinaface
+# backend on this project's benchmarks with equivalent accuracy.
+insightface
+onnxruntime

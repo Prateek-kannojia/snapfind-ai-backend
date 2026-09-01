@@ -10,6 +10,7 @@ class Settings:
         default_upload_dir = base_dir / "storage" / "uploads"
         default_database_path = base_dir / "app.db"
         default_deepface_home = base_dir / "storage" / "deepface"
+        default_insightface_home = base_dir / "storage" / "insightface"
 
         self.app_name = os.getenv("APP_NAME", "Event Photo Finder API")
         self.app_version = os.getenv("APP_VERSION", "0.1.0")
@@ -20,11 +21,26 @@ class Settings:
         self.deepface_home = Path(
             os.getenv("DEEPFACE_HOME", str(default_deepface_home))
         ).resolve()
+        self.insightface_home = Path(
+            os.getenv("INSIGHTFACE_HOME", str(default_insightface_home))
+        ).resolve()
         self.max_event_photos = int(os.getenv("MAX_EVENT_PHOTOS", "500"))
         self.allowed_image_extensions = {".jpg", ".jpeg", ".png", ".webp"}
         self.selfie_detector = os.getenv("SELFIE_DETECTOR", "mtcnn")
-        self.event_photo_detector = os.getenv("EVENT_PHOTO_DETECTOR", "opencv")
+        # Event photos are always detected with insightface/SCRFD now — see
+        # services/face_matcher.py and README "Event-photo detector history".
+        # Two earlier detectors (opencv, retinaface) were tried and replaced;
+        # they're preserved as a runnable comparison in
+        # benchmarks/detector_comparison.py at the repo root, not here — this
+        # settings module only configures what production actually uses.
         self.face_match_workers = int(os.getenv("FACE_MATCH_WORKERS", "4"))
+        # Phone photos are commonly 3000-4000px on the long side. Detection and
+        # embedding cost scale with pixel count, so we downscale before handing
+        # the image to DeepFace. Selfie keeps a higher ceiling since it is a
+        # single image and accuracy matters most there; event photos are
+        # downscaled harder since there are many of them and speed matters more.
+        self.selfie_max_dimension = int(os.getenv("SELFIE_MAX_DIMENSION", "1024"))
+        self.event_photo_max_dimension = int(os.getenv("EVENT_PHOTO_MAX_DIMENSION", "800"))
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.rq_queue_name = os.getenv("RQ_QUEUE_NAME", "face-matching")
         self.rq_job_timeout_seconds = int(os.getenv("RQ_JOB_TIMEOUT_SECONDS", "1800"))
