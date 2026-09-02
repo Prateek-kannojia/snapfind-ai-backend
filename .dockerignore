@@ -1,0 +1,19 @@
+# Local virtual environment — the image installs its own dependencies.
+venv/
+
+# Runtime data: uploaded photos, cached model weights, the SQLite dev DB.
+# These become Docker volumes at runtime instead of being baked into the
+# image — see docker-compose.yml.
+storage/uploads/
+storage/deepface/
+storage/insightface/
+app.db
+
+# Nested git repo (this backend has its own history separate from the
+# outer project) and editor/OS noise.
+.git/
+.idea/
+.vscode/
+__pycache__/
+**/__pycache__/
+*.pyc

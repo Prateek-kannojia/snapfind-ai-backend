@@ -1,0 +1,64 @@
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  # pgvector/pgvector:pg16 = official postgres:16 image with the pgvector
+  # extension already built in — avoids a second infra change when the
+  # embedding column moves from Text/JSON to a real Vector(512) type.
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: snapfind
+      POSTGRES_USER: snapfind
+      POSTGRES_PASSWORD: snapfind
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snapfind"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://snapfind:snapfind@postgres:5432/snapfind
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - deepface_weights:/app/storage/deepface
+      - insightface_weights:/app/storage/insightface
+      - uploads_data:/app/storage/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build: .
+    command: python worker.py
+    environment:
+      DATABASE_URL: postgresql+psycopg2://snapfind:snapfind@postgres:5432/snapfind
+      REDIS_URL: redis://redis:6379/0
+      RQ_WORKER_CLASS: default
+    volumes:
+      - deepface_weights:/app/storage/deepface
+      - insightface_weights:/app/storage/insightface
+      - uploads_data:/app/storage/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  deepface_weights:
+  insightface_weights:
+  uploads_data:
