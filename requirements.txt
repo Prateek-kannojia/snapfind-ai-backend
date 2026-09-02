@@ -19,3 +19,13 @@ numpy
 # backend on this project's benchmarks with equivalent accuracy.
 insightface
 onnxruntime
+# PostgreSQL driver for SQLAlchemy. SQLite is still the default for
+# zero-setup local dev (see core/settings.py); set DATABASE_URL to a
+# postgresql+psycopg2:// URL (docker-compose.yml does this automatically)
+# to use Postgres instead — no other code changes needed, the app was
+# already written against SQLAlchemy's DB-agnostic API.
+psycopg2-binary
+# SQLAlchemy Vector(512) column type for EventPhoto.embedding on Postgres
+# (see db/orm_models.py). Only active when DATABASE_URL is Postgres — the
+# same package works fine even when SQLite is in use, it's just unused.
+pgvector

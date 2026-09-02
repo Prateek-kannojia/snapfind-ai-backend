@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 from uuid import uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, Enum as SqlEnum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -49,8 +51,14 @@ class EventPhoto(Base):
     job_id: Mapped[str] = mapped_column(ForeignKey("upload_jobs.id"), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
-    # JSON-serialized list of 512 ArcFace floats. NULL until first processing run.
-    embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # A real pgvector column on Postgres (production/Docker), a JSON-text
+    # fallback on SQLite (zero-setup local dev — see core/settings.py; the
+    # `vector` extension and type don't exist there). Both paths store the
+    # same 512 ArcFace numbers; services/face_matcher.py handles the two
+    # representations via _serialize_embedding()/_deserialize_embedding().
+    embedding: Mapped[Any | None] = mapped_column(
+        Text().with_variant(Vector(512), "postgresql"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     job: Mapped[UploadJob] = relationship(back_populates="event_photos")

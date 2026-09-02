@@ -5,7 +5,7 @@ import math
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import cv2
 import numpy as np
@@ -56,15 +56,24 @@ class SelfieFaceNotDetectedError(FaceMatchError):
 class _Photo(NamedTuple):
     id: int
     storage_path: str
-    embedding: str | None  # JSON string of 512 floats, or None if not yet computed
+    embedding: Any | None  # JSON str (SQLite) or a pgvector value (Postgres) — see db/orm_models.py
 
 
-def _deserialize_embedding(raw: str) -> list[float]:
+# True on Postgres (production/Docker), where `embedding` is a real
+# pgvector Vector(512) column and comes back as a list/array of floats
+# directly. False on SQLite (zero-setup local dev), where it's stored as a
+# JSON string and needs json.dumps/loads. See db/orm_models.py EventPhoto.
+_USES_PGVECTOR = not settings.database_url.startswith("sqlite")
+
+
+def _deserialize_embedding(raw: Any) -> list[float]:
+    if _USES_PGVECTOR:
+        return list(raw)
     return json.loads(raw)
 
 
-def _serialize_embedding(embedding: list[float]) -> str:
-    return json.dumps(embedding)
+def _serialize_embedding(embedding: list[float]) -> Any:
+    return embedding if _USES_PGVECTOR else json.dumps(embedding)
 
 
 def _cosine_distance(source: list[float], target: list[float]) -> float:
@@ -184,7 +193,7 @@ def _embedding_for_image(image_path: str, *, is_selfie: bool) -> list[float]:
 
 def _process_single_photo(
     selfie_embedding: list[float], photo: _Photo
-) -> tuple[int, float | None, str | None]:
+) -> tuple[int, float | None, Any | None]:
     try:
         if photo.embedding is not None:
             image_embedding = _deserialize_embedding(photo.embedding)
@@ -218,7 +227,7 @@ def build_matches_for_job(
     orm_by_id = {p.id: p for p in event_photos}
 
     matches: list[MatchedPhoto] = []
-    embeddings_to_save: dict[int, str] = {}
+    embeddings_to_save: dict[int, Any] = {}
     worker_count = min(settings.face_match_workers, max(1, len(photos)))
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:

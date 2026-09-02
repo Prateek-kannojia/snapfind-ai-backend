@@ -25,11 +25,20 @@ def get_db():
         db.close()
 
 
+def ensure_pgvector_extension() -> None:
+    """Enables the pgvector extension on Postgres. Must run before
+    Base.metadata.create_all(), since EventPhoto.embedding is a
+    Vector(512) column on Postgres (see db/orm_models.py) and Postgres
+    can't create that column type until the extension exists. No-op on
+    SQLite, which doesn't have this concept at all.
+    """
+    if settings.database_url.startswith("sqlite"):
+        return
+    with engine.begin() as connection:
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+
+
 def ensure_runtime_schema() -> None:
-    """Adds columns introduced after the first `upload_jobs` table was
-    created, without wiping the existing SQLite dev database. Only needed
-    on SQLite -- a fresh database (or Postgres, once that's supported)
-    already gets these columns from Base.metadata.create_all()."""
     if not settings.database_url.startswith("sqlite"):
         return
 
