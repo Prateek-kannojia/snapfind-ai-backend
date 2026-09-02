@@ -121,7 +121,7 @@ def _load_resized_image(image_path: str, max_dimension: int) -> np.ndarray:
     return image
 
 
-def _embedding_for_event_photo_fast(image_array: np.ndarray) -> list[float]:
+def _event_photo_embedding(image_array: np.ndarray) -> list[float]:
     """Detect + align with a lightweight ONNX detector (insightface SCRFD),
     then embed with DeepFace's ArcFace via detector_backend="skip" since the
     face is already cropped and aligned to the standard ArcFace convention.
@@ -147,7 +147,7 @@ def _embedding_for_event_photo_fast(image_array: np.ndarray) -> list[float]:
     return result[0]["embedding"]
 
 
-def _embedding_for_selfie(image_array: np.ndarray) -> list[float]:
+def _selfie_embedding(image_array: np.ndarray) -> list[float]:
     """Selfie path: DeepFace + mtcnn, unchanged since the MVP."""
     from deepface import DeepFace
 
@@ -181,17 +181,17 @@ def _embedding_for_image(image_path: str, *, is_selfie: bool) -> list[float]:
     image_array = _load_resized_image(image_path, max_dimension)
 
     if is_selfie:
-        return _embedding_for_selfie(image_array)
+        return _selfie_embedding(image_array)
 
     try:
-        return _embedding_for_event_photo_fast(image_array)
+        return _event_photo_embedding(image_array)
     except FaceMatchError:
         raise
     except Exception as exc:
         raise FaceMatchError("Could not detect a face in one of the event photos") from exc
 
 
-def _process_single_photo(
+def _embed_and_score_event_photo(
     selfie_embedding: list[float], photo: _Photo
 ) -> tuple[int, float | None, Any | None]:
     try:
@@ -232,7 +232,7 @@ def build_matches_for_job(
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {
-            executor.submit(_process_single_photo, selfie_embedding, photo): photo
+            executor.submit(_embed_and_score_event_photo, selfie_embedding, photo): photo
             for photo in photos
         }
         for future in as_completed(futures):
