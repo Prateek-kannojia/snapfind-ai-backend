@@ -234,8 +234,6 @@ Face_recognition/
 ├── Dockerfile                 # Builds one image, shared by the api and worker services
 ├── docker-compose.yml         # Orchestrates api, worker, redis, postgres (pgvector-enabled) together
 ├── .dockerignore
-├── scripts/
-│   └── benchmark_downscale.py # Before/after timing proof for the image-downscale optimization
 ├── api/
 │   ├── routes.py              # All HTTP endpoints
 │   └── schemas.py             # Pydantic response models (what the API returns)
@@ -434,7 +432,7 @@ These original estimates predate this session's changes and were measured agains
 | `retinaface` (accurate, resized) | ~11s — 4/4 faces, correct but slow |
 | `insightface`/SCRFD (current default) | **~0.4s** — 4/4 faces, verified accurate (see Work log) |
 
-All measured on a sandboxed dev machine whose TensorFlow build isn't using AVX2/FMA (visible in its own startup logs), so absolute numbers will differ on a normal machine — re-run `scripts/benchmark_downscale.py` and the detector comparison described in the Work log on your own hardware for numbers you can cite directly. The *relative* pattern (opencv fast-but-broken, retinaface slow-but-correct, insightface fast-and-correct) should hold regardless of hardware, since it was measured identically across all three.
+All measured on a sandboxed dev machine whose TensorFlow build isn't using AVX2/FMA (visible in its own startup logs), so absolute numbers will differ on a normal machine — re-run the detector comparison in `benchmarks/detector_comparison.py` (repo root) on your own hardware for numbers you can cite directly. The *relative* pattern (opencv fast-but-broken, retinaface slow-but-correct, insightface fast-and-correct) should hold regardless of hardware, since it was measured identically across all three.
 
 For a portfolio demo, test with 15–20 photos. The second run will always be fast thanks to embedding caching.
 
@@ -563,6 +561,14 @@ Since there's no migration tool yet (no Alembic — see "Known limitation" below
 - `api/routes.py` simplified: no `try/except` left in any route, `_raise_job_http_error()` deleted entirely — routes just call the service function and return its result.
 
 **Verified for real:** ran the actual dev server (`uvicorn main:app`) and hit it with real HTTP requests — `GET /jobs/does-not-exist-123` → `404 {"detail":"Job not found","error_code":"job_not_found"}`, and a real multipart upload with a `.txt` selfie → `400 {"detail":"Selfie must be one of: ...","error_code":"upload_validation_error"}` — both through the full route → service → centralized handler path, not just import-checked.
+
+**Status:** done.
+
+### 2026-09-03 — Removed `scripts/benchmark_downscale.py` (broken, stale)
+
+**Problem found during a stale-code audit:** the script called `settings.event_photo_detector`, an attribute removed from `core/settings.py` when the event-photo detector was centralized to insightface (see "Event-photo detector history" above) — running it would crash with `AttributeError`. Even fixed, it would only be exercising DeepFace's old detector-backend path, which production doesn't use for event photos anymore, so it wasn't measuring anything current.
+
+**What we did:** deleted the file (and the now-empty `scripts/` directory) and the misplaced `services/Face_recognition.code-workspace` IDE file the same pass — user deleted both directly. Updated the two dangling README references (file tree, and the "re-run this benchmark yourself" pointer) to point at `benchmarks/detector_comparison.py`, which is the current, working, actually-representative benchmark.
 
 **Status:** done.
 
