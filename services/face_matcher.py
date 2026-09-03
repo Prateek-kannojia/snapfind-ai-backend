@@ -45,6 +45,26 @@ def _get_insightface_app():
     return _insightface_app
 
 
+# Same lazy-import reasoning as _get_insightface_app() above: deepface drags
+# in TensorFlow (multi-second import, ~1GB memory). The `api` container's
+# process imports this module too (main.py -> api/routes.py ->
+# services/job_service.py -> here), but never actually calls anything that
+# needs deepface — only the `worker` process does. A module-level `import
+# deepface` would make every API server startup pay that cost for nothing.
+# One accessor here instead of `from deepface import DeepFace` repeated in
+# every function that needs it — same pattern, not duplicated twice.
+_deepface_module = None
+
+
+def _get_deepface():
+    global _deepface_module
+    if _deepface_module is None:
+        from deepface import DeepFace
+
+        _deepface_module = DeepFace
+    return _deepface_module
+
+
 class FaceMatchError(Exception):
     pass
 
@@ -126,7 +146,6 @@ def _event_photo_embedding(image_array: np.ndarray) -> list[float]:
     then embed with DeepFace's ArcFace via detector_backend="skip" since the
     face is already cropped and aligned to the standard ArcFace convention.
     """
-    from deepface import DeepFace
     from insightface.utils import face_align
 
     app = _get_insightface_app()
@@ -139,7 +158,7 @@ def _event_photo_embedding(image_array: np.ndarray) -> list[float]:
     best = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
     aligned = face_align.norm_crop(image_array, best.kps, image_size=112, mode="arcface")
 
-    result = DeepFace.represent(
+    result = _get_deepface().represent(
         img_path=aligned, model_name=DEFAULT_MODEL, detector_backend="skip", enforce_detection=False
     )
     if not result:
@@ -149,10 +168,8 @@ def _event_photo_embedding(image_array: np.ndarray) -> list[float]:
 
 def _selfie_embedding(image_array: np.ndarray) -> list[float]:
     """Selfie path: DeepFace + mtcnn, unchanged since the MVP."""
-    from deepface import DeepFace
-
     try:
-        result = DeepFace.represent(
+        result = _get_deepface().represent(
             img_path=image_array,
             model_name=DEFAULT_MODEL,
             detector_backend=settings.selfie_detector,
