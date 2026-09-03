@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 from sqlalchemy.orm import Session
 
+from core.errors import AppError
 from core.settings import settings
 from db.orm_models import EventPhoto, MatchedPhoto, UploadJob
 
@@ -65,12 +66,25 @@ def _get_deepface():
     return _deepface_module
 
 
-class FaceMatchError(Exception):
-    pass
+class FaceMatchError(AppError):
+    """Base for face-matching errors. In practice these are only ever raised
+    inside the worker process (run_job_processing -> build_matches_for_job),
+    which catches Exception broadly and stores the message on the job's
+    last_error column rather than letting it become a live HTTP response —
+    the client learns about it by polling GET /jobs/{id}, not from a request
+    that raised this directly. Still an AppError (status_code/error_code,
+    422 by default: the image was readable but no usable face was found in
+    it) so it's ready to cross an HTTP boundary directly the moment any
+    route calls into this module synchronously — e.g. a future "validate
+    this selfie before upload" endpoint."""
+
+    def __init__(self, message: str, *, status_code: int = 422, error_code: str = "face_match_error") -> None:
+        super().__init__(message, status_code=status_code, error_code=error_code)
 
 
 class SelfieFaceNotDetectedError(FaceMatchError):
-    pass
+    def __init__(self, message: str) -> None:
+        super().__init__(message, status_code=422, error_code="selfie_face_not_detected")
 
 
 class _Photo(NamedTuple):

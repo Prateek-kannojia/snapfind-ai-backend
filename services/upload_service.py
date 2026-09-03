@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
+from core.errors import AppError
 from core.settings import settings
 from db.orm_models import EventPhoto, UploadJob
 from api.schemas import UploadJobResponse
@@ -17,8 +18,9 @@ from services.storage_service import (
 )
 
 
-class UploadValidationError(Exception):
-    pass
+class UploadValidationError(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, status_code=400, error_code="upload_validation_error")
 
 
 def _validate_image(upload_file: UploadFile, label: str) -> None:

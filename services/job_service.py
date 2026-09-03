@@ -11,6 +11,7 @@ from api.schemas import (
     MatchListResponse,
     MatchedPhotoResponse,
 )
+from core.errors import AppError
 from core.settings import settings
 from db.database import SessionLocal
 from db.orm_models import JobStatus, MatchedPhoto, UploadJob
@@ -18,15 +19,50 @@ from services.face_matcher import build_matches_for_job
 from services.queue_service import enqueue_face_matching_job
 
 
-class JobServiceError(Exception):
-    def __init__(self, message: str, *, status_code: int = 400) -> None:
-        super().__init__(message)
-        self.status_code = status_code
+class JobServiceError(AppError):
+    """Base for job-domain errors. Named subclasses below cover every case
+    this module actually raises — nothing here builds an error from a bare
+    message + status_code at the call site anymore, so `isinstance` checks
+    and greps both work, and the HTTP mapping lives with the error, not
+    scattered across call sites."""
+
+    def __init__(self, message: str, *, status_code: int = 400, error_code: str = "job_error") -> None:
+        super().__init__(message, status_code=status_code, error_code=error_code)
 
 
 class JobNotFoundError(JobServiceError):
     def __init__(self, message: str = "Job not found") -> None:
-        super().__init__(message, status_code=404)
+        super().__init__(message, status_code=404, error_code="job_not_found")
+
+
+class MatchNotFoundError(JobServiceError):
+    def __init__(self, message: str = "Matched photo not found") -> None:
+        super().__init__(message, status_code=404, error_code="match_not_found")
+
+
+class MatchFileMissingError(JobServiceError):
+    def __init__(self, message: str = "Matched photo file not found on disk") -> None:
+        super().__init__(message, status_code=404, error_code="match_file_missing")
+
+
+class JobAlreadyQueuedError(JobServiceError):
+    def __init__(self, message: str = "Job is already queued for processing") -> None:
+        super().__init__(message, status_code=409, error_code="job_already_queued")
+
+
+class JobAlreadyProcessingError(JobServiceError):
+    def __init__(self, message: str = "Job is currently being processed") -> None:
+        super().__init__(message, status_code=409, error_code="job_already_processing")
+
+
+class NoEventPhotosError(JobServiceError):
+    def __init__(self, message: str = "Job has no event photos to process") -> None:
+        super().__init__(message, status_code=400, error_code="no_event_photos")
+
+
+class QueueUnavailableError(JobServiceError):
+    def __init__(self, message: str = "Could not enqueue job for processing. Is Redis running?") -> None:
+        super().__init__(message, status_code=503, error_code="queue_unavailable")
 
 
 def _load_job(db: Session, job_id: str) -> UploadJob | None:
@@ -60,7 +96,7 @@ def _get_job_or_raise(db: Session, job_id: str) -> UploadJob:
 def _get_match_or_raise(db: Session, job_id: str, match_id: int) -> MatchedPhoto:
     match = _load_match(db, job_id, match_id)
     if match is None:
-        raise JobServiceError("Matched photo not found", status_code=404)
+        raise MatchNotFoundError()
     return match
 
 
@@ -171,13 +207,13 @@ def enqueue_job_processing(db: Session, job_id: str, threshold: float) -> JobSum
         if job is None:
             raise JobNotFoundError()
         if job.status == JobStatus.queued:
-            raise JobServiceError("Job is already queued for processing", status_code=409)
-        raise JobServiceError("Job is currently being processed", status_code=409)
+            raise JobAlreadyQueuedError()
+        raise JobAlreadyProcessingError()
 
     job = _get_job_or_raise(db, job_id)
     if not job.event_photos:
         db.rollback()
-        raise JobServiceError("Job has no event photos to process")
+        raise NoEventPhotosError()
 
     db.commit()
     try:
@@ -189,10 +225,7 @@ def enqueue_job_processing(db: Session, job_id: str, threshold: float) -> JobSum
         job.queued_at = None
         job.rq_job_id = None
         db.commit()
-        raise JobServiceError(
-            "Could not enqueue job for processing. Is Redis running?",
-            status_code=503,
-        ) from exc
+        raise QueueUnavailableError() from exc
 
     job = _get_job_or_raise(db, job_id)
     job.rq_job_id = rq_job_id
@@ -251,5 +284,5 @@ def get_match_file(db: Session, job_id: str, match_id: int) -> tuple[Path, str]:
     match = _get_match_or_raise(db, job_id, match_id)
     file_path = Path(match.event_photo.storage_path)
     if not file_path.exists():
-        raise JobServiceError("Matched photo file not found on disk", status_code=404)
+        raise MatchFileMissingError()
     return file_path, match.event_photo.original_filename

@@ -11,6 +11,14 @@ from fastapi import UploadFile
 from core.settings import settings
 
 
+# Deliberately a plain Exception, not an AppError: storage_service is a
+# filesystem-only utility with no concept of "what HTTP status should this
+# be" — that call belongs to whoever's using the storage. Today the only
+# caller (upload_service.create_upload_job) always catches this and
+# re-raises it as UploadValidationError, so it never reaches a route
+# directly. If a future caller forgets to catch it, it becomes an
+# uncaught-exception 500 by default, which is the correct behavior for an
+# internal error nobody translated on purpose.
 class StorageError(Exception):
     pass
 

@@ -2,22 +2,26 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from db.database import get_db
 from api.schemas import JobSummaryResponse, MatchListResponse, UploadJobResponse
 from services.job_service import (
-    JobServiceError,
     enqueue_job_processing,
     get_job_detail,
     get_job_matches,
     get_match_file,
 )
-from services.upload_service import UploadValidationError, create_upload_job
+from services.upload_service import create_upload_job
 
 router = APIRouter()
+
+# No try/except here for any of these routes: every error a service function
+# can raise is an AppError (or subclass) with its own status_code/error_code
+# baked in, and main.py's single @app.exception_handler(AppError) converts
+# it to the right JSON response automatically. See core/errors.py.
 
 
 @router.post("/jobs/upload", response_model=UploadJobResponse)
@@ -26,20 +30,12 @@ async def upload_event_photos(
     event_photos_zip: Annotated[UploadFile, File(...)],
     db: Session = Depends(get_db),
 ) -> UploadJobResponse:
-    try:
-        return await create_upload_job(
-            db=db, selfie=selfie, event_photos_zip=event_photos_zip
-        )
-    except UploadValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await create_upload_job(db=db, selfie=selfie, event_photos_zip=event_photos_zip)
 
 
 @router.get("/jobs/{job_id}", response_model=JobSummaryResponse)
 def fetch_job(job_id: str, db: Session = Depends(get_db)) -> JobSummaryResponse:
-    try:
-        return get_job_detail(db=db, job_id=job_id)
-    except JobServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return get_job_detail(db=db, job_id=job_id)
 
 
 @router.post("/jobs/{job_id}/process", response_model=JobSummaryResponse)
@@ -48,26 +44,17 @@ def process_uploaded_job(
     threshold: float = Query(0.68, gt=0, lt=1.0),
     db: Session = Depends(get_db),
 ) -> JobSummaryResponse:
-    try:
-        return enqueue_job_processing(db=db, job_id=job_id, threshold=threshold)
-    except JobServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return enqueue_job_processing(db=db, job_id=job_id, threshold=threshold)
 
 
 @router.get("/jobs/{job_id}/matches", response_model=MatchListResponse)
 def fetch_job_matches(job_id: str, db: Session = Depends(get_db)) -> MatchListResponse:
-    try:
-        return get_job_matches(db=db, job_id=job_id)
-    except JobServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return get_job_matches(db=db, job_id=job_id)
 
 
 @router.get("/jobs/{job_id}/matches/{match_id}/download")
 def download_matched_photo(
     job_id: str, match_id: int, db: Session = Depends(get_db)
 ) -> FileResponse:
-    try:
-        file_path, filename = get_match_file(db=db, job_id=job_id, match_id=match_id)
-        return FileResponse(path=file_path, filename=filename, media_type="application/octet-stream")
-    except JobServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    file_path, filename = get_match_file(db=db, job_id=job_id, match_id=match_id)
+    return FileResponse(path=file_path, filename=filename, media_type="application/octet-stream")
