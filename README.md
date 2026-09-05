@@ -23,7 +23,7 @@ Understanding this is the most important part of the project.
 Before comparing faces, we need to locate the face inside each image. This is called **face detection**. We use two different detectors:
 
 - **mtcnn** (Multi-task Cascaded Convolutional Networks) for the selfie. It is a neural network itself, slower but very accurate. We use it for the selfie because it is the most important image — if we miss the selfie face, the whole job fails. mtcnn handles slight angles, shadows, and imperfect lighting well.
-- **insightface / SCRFD-500MF** for event photos, via `insightface`'s `FaceAnalysis` (ONNX Runtime, CPU) — a lightweight modern detector, same weight class as the "RetinaFace-MobileNet-0.25" variant benchmarked in the original RetinaFace paper. The detected face is aligned to the standard 112×112 ArcFace convention (`insightface.utils.face_align.norm_crop`, using the detector's 5-point landmarks) and only then handed to DeepFace's ArcFace model for embedding (`detector_backend="skip"`, since detection+alignment is already done) — so the embedding step is still the same ArcFace model either way, only the detection+alignment front-end changed. This went through two earlier choices first (`opencv`, then `retinaface`) — the full reasoning, measurements, and the retired detectors themselves (still runnable, just not part of production anymore) live in `../benchmarks/` at the repo root, not in this backend's own code.
+- **insightface / SCRFD-500MF** for event photos, via `insightface`'s `FaceAnalysis` (ONNX Runtime, CPU) — a lightweight modern detector, same weight class as the "RetinaFace-MobileNet-0.25" variant benchmarked in the original RetinaFace paper. The detected face is aligned to the standard 112×112 ArcFace convention (`insightface.utils.face_align.norm_crop`, using the detector's 5-point landmarks) and only then handed to DeepFace's ArcFace model for embedding (`detector_backend="skip"`, since detection+alignment is already done) — so the embedding step is still the same ArcFace model either way, only the detection+alignment front-end changed. This went through two earlier choices first (`opencv`, then `retinaface`) — the full reasoning, measurements, and the retired detectors themselves (still runnable, just not part of production anymore) live in `benchmarks/` at the repo root, not in this backend's own code.
 
 This split (accurate for selfie, fast-and-still-accurate for bulk) is a deliberate tradeoff between speed and reliability — see the Work log for how "fast" and "accurate" were actually measured against real photos rather than assumed.
 
@@ -234,6 +234,10 @@ Face_recognition/
 ├── Dockerfile                 # Builds one image, shared by the api and worker services
 ├── docker-compose.yml         # Orchestrates api, worker, redis, postgres (pgvector-enabled) together
 ├── .dockerignore
+├── benchmarks/
+│   ├── README.md               # Detector comparison: opencv vs retinaface vs insightface, real numbers
+│   ├── detector_comparison.py  # Runnable script that reproduces those numbers
+│   └── results.json            # Raw output, regenerated on each run
 ├── api/
 │   ├── routes.py              # All HTTP endpoints
 │   └── schemas.py             # Pydantic response models (what the API returns)
@@ -407,7 +411,7 @@ On the very first processing request, DeepFace will download the ArcFace model w
 | `RQ_WORKER_CLASS` | `simple` on Windows, `default` elsewhere | RQ worker implementation. Use `simple` for local Windows testing and `default` for Linux/Docker production |
 | `JOB_STALE_AFTER_SECONDS` | `3600` | How long a queued/processing job can sit before `/process` is allowed to requeue it |
 
-Note: there is no `EVENT_PHOTO_DETECTOR` variable — the event-photo detector is fixed to `insightface`/SCRFD in code, not configurable. It went through two earlier choices first (`opencv`, `retinaface`); that history, the comparison data, and the retired detector code all live in `../benchmarks/` at the repo root, not here.
+Note: there is no `EVENT_PHOTO_DETECTOR` variable — the event-photo detector is fixed to `insightface`/SCRFD in code, not configurable. It went through two earlier choices first (`opencv`, `retinaface`); that history, the comparison data, and the retired detector code all live in `benchmarks/` at the repo root, not here.
 
 ---
 
@@ -501,7 +505,7 @@ $env:WORKER_COUNT=4; python worker.py    # 4 worker processes
 
 **What we did:** one `Dockerfile` builds a single image containing the app and its dependencies; `docker-compose.yml` runs that image twice as separate services — `api` (default command: `uvicorn`) and `worker` (`command: python worker.py`) — alongside `redis:7` and `pgvector/pgvector:pg16` (chosen over plain `postgres:16` specifically so the pgvector extension would already be available for the next step, avoiding a second infra change). `depends_on: condition: service_healthy` on Postgres stops `api`/`worker` from starting before Postgres can accept connections. Named volumes (`deepface_weights`, `insightface_weights`, `postgres_data`, `uploads_data`) keep model weights, the database, and uploaded photos alive across container restarts, since containers themselves are disposable by design.
 
-**Status:** done, verified — see the "full pipeline verified end-to-end" work below. The general practice this uses (why multi-container orchestration is a real thing companies do, not just us) is written up in `../production_learnings.md`.
+**Status:** done, verified — see the "full pipeline verified end-to-end" work below.
 
 ### 2026-09-02 — PostgreSQL
 
@@ -519,7 +523,7 @@ $env:WORKER_COUNT=4; python worker.py    # 4 worker processes
 
 **What we did:** uploaded a real selfie + real event-photo zip through the actual running API (`curl` multipart POST, not a filesystem shortcut — the container's `storage/uploads` is a Docker volume, separate from the host), triggered processing, and let the real worker process it, including a genuine first-run download of ArcFace/mtcnn/insightface weights into the fresh volumes. Ran both a negative control (a selfie of a different person than the event photos — correctly 0 matches) and a positive control (the correct selfie — correctly matched all 4 real event photos, including the one photo that the original `opencv` detector had failed on completely, back at the very start of this project's perf work). Verified the match `download` endpoint serves the exact original file (byte-identical). Also directly inspected `event_photos.embedding` in Postgres via `psql` to confirm real 512-number embeddings were actually stored, not silently skipped.
 
-**Status:** done. This is also where the technique of calling the app's real production functions directly inside the running container (instead of modifying code and redeploying to answer a diagnostic question) came from — written up in `../production_learnings.md`.
+**Status:** done. This is also where the technique of calling the app's real production functions directly inside the running container (instead of modifying code and redeploying to answer a diagnostic question) came from.
 
 ### 2026-09-02 — Real pgvector column instead of JSON text
 

@@ -1,0 +1,30 @@
+{
+  "job_id": "24c8ea7c-093a-4694-b33d-9a4585978a98",
+  "photo_count": 4,
+  "detectors": [
+    {
+      "name": "opencv",
+      "detected": 0,
+      "total": 4,
+      "avg_ms_per_photo": 111.11392499879003
+    },
+    {
+      "name": "retinaface",
+      "detected": 4,
+      "total": 4,
+      "avg_ms_per_photo": 11726.89139994327
+    },
+    {
+      "name": "insightface",
+      "detected": 4,
+      "total": 4,
+      "avg_ms_per_photo": 319.21032490208745
+    }
+  ],
+  "embedding_agreement_retinaface_vs_insightface": {
+    "IMG_20250301_101253092_HDR.jpg": 0.01416696716963961,
+    "IMG_20250301_114959813_HDR.jpg": 0.005545460460746998,
+    "IMG_20250301_115003398_HDR.jpg": 0.005284384166409306,
+    "IMG_20250302_155231085_HDR.jpg": 0.2374109911373189
+  }
+}
