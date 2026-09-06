@@ -396,7 +396,8 @@ On the very first processing request, DeepFace will download the ArcFace model w
 |---|---|---|
 | `APP_NAME` | `Event Photo Finder API` | Title shown in API docs |
 | `APP_VERSION` | `0.1.0` | Version shown in API docs |
-| `DATABASE_URL` | `sqlite:///./app.db` | SQLAlchemy database URL. `docker-compose.yml` overrides this to `postgresql+psycopg2://snapfind:snapfind@postgres:5432/snapfind` — on Postgres, `EventPhoto.embedding` becomes a real pgvector `Vector(512)` column instead of JSON text (see Work log) |
+| `DATABASE_URL` | `sqlite:///./app.db` | SQLAlchemy database URL. `docker-compose.yml` overrides this to Postgres — on Postgres, `EventPhoto.embedding` becomes a real pgvector `Vector(512)` column instead of JSON text (see Work log) |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | `snapfind` / `snapfind` / `snapfind` | Only used by `docker-compose.yml`'s Postgres service. Copy `.env.example` to `.env` and set real values for anything beyond local dev — `.env` is gitignored, never committed |
 | `UPLOAD_ROOT` | `storage/uploads` | Directory for uploaded files |
 | `DEEPFACE_HOME` | `storage/deepface` | DeepFace model cache directory |
 | `INSIGHTFACE_HOME` | `storage/insightface` | insightface model cache directory (the event-photo detector's ONNX weights) |
@@ -575,6 +576,14 @@ Since there's no migration tool yet (no Alembic — see "Known limitation" below
 **What we did:** deleted the file (and the now-empty `scripts/` directory) and the misplaced `services/Face_recognition.code-workspace` IDE file the same pass — user deleted both directly. Updated the two dangling README references (file tree, and the "re-run this benchmark yourself" pointer) to point at `benchmarks/detector_comparison.py`, which is the current, working, actually-representative benchmark.
 
 **Status:** done.
+
+### 2026-09-05 — Stopped hardcoding the Postgres password in `docker-compose.yml`
+
+**Problem raised:** after pushing to GitHub, `POSTGRES_PASSWORD: snapfind` was sitting in plain text in a public repo. Low risk today (nothing but this compose file's own containers ever talk to it), but exactly the kind of default credential that gets scanned for the moment a compose file like this is ever deployed somewhere with the port actually open to the internet — and a hardcoded password in source control is a red flag on its own regardless of whether it's ever exploited.
+
+**What we did:** switched `POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD` (and everywhere `DATABASE_URL` builds from them) to `${VAR:-snapfind}` substitution — same default if nothing is set, so `docker compose up` still works with zero config, but a real deployment can override every value via a `.env` file. Added `.env.example` (committed, placeholder values only) and gitignored `.env` itself.
+
+**Status:** done. `docker compose config` verified the resolved config is byte-identical to before when no `.env` exists.
 
 ### Idea, not yet started — drop DeepFace/TensorFlow entirely for event photos
 

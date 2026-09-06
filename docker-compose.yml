@@ -10,15 +10,15 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_DB: snapfind
-      POSTGRES_USER: snapfind
-      POSTGRES_PASSWORD: snapfind
+      POSTGRES_DB: ${POSTGRES_DB:-snapfind}
+      POSTGRES_USER: ${POSTGRES_USER:-snapfind}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-snapfind}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U snapfind"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-snapfind}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -28,7 +28,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+psycopg2://snapfind:snapfind@postgres:5432/snapfind
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-snapfind}:${POSTGRES_PASSWORD:-snapfind}@postgres:5432/${POSTGRES_DB:-snapfind}
       REDIS_URL: redis://redis:6379/0
     volumes:
       - deepface_weights:/app/storage/deepface
@@ -44,7 +44,7 @@ services:
     build: .
     command: python worker.py
     environment:
-      DATABASE_URL: postgresql+psycopg2://snapfind:snapfind@postgres:5432/snapfind
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-snapfind}:${POSTGRES_PASSWORD:-snapfind}@postgres:5432/${POSTGRES_DB:-snapfind}
       REDIS_URL: redis://redis:6379/0
       RQ_WORKER_CLASS: default
     volumes:
