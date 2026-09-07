@@ -52,6 +52,8 @@ def ensure_runtime_schema() -> None:
         "processing_started_at": "DATETIME",
         "rq_job_id": "VARCHAR(255)",
         "last_error": "TEXT",
+        "zip_object_key": "VARCHAR(500)",
+        "zip_upload_id": "VARCHAR(255)",
     }
 
     with engine.begin() as connection:

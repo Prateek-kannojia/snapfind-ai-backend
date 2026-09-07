@@ -29,6 +29,10 @@ class UploadJob(Base):
     )
     selfie_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     selfie_storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    # Object key of the uploaded zip, and the multipart upload id needed to
+    # resume/complete it. Nullable so existing rows survive the migration.
+    zip_object_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    zip_upload_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     event_photo_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     queued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

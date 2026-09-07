@@ -13,34 +13,17 @@ from fastapi import UploadFile
 from core.settings import settings
 
 
-# Deliberately a plain Exception, not an AppError: storage_service is a
-# storage-only utility with no concept of "what HTTP status should this
-# be" — that call belongs to whoever's using the storage. Today the only
-# caller (upload_service.create_upload_job) always catches this and
-# re-raises it as UploadValidationError, so it never reaches a route
-# directly. If a future caller forgets to catch it, it becomes an
-# uncaught-exception 500 by default, which is the correct behavior for an
-# internal error nobody translated on purpose.
+# Plain Exception, not an AppError: storage has no business deciding HTTP
+# status codes. Its one caller catches and translates it.
 class StorageError(Exception):
     pass
 
 
-# ---------------------------------------------------------------------------
-# Object storage (MinIO / any S3-compatible service)
-#
-# Photos live here, addressed by *object key* — not by filesystem path. See
-# DEEP_DIVE.md for the full mental model; the short version is that Postgres
-# stores keys, presigned URLs are minted on demand and expire, and the app
-# never opens a photo with open()/imread() again.
-# ---------------------------------------------------------------------------
+# --- Object storage (MinIO / any S3-compatible service) --------------------
+# Photos are addressed by object key, not filesystem path. See DEEP_DIVE.md.
 
-# Lazily-built singleton client. Note this defers the *client*, not the
-# import: unlike _get_deepface() in face_matcher.py (where the point is to
-# keep TensorFlow out of the api process entirely), boto3 is lightweight and
-# both the api and worker processes genuinely use it, so there's nothing to
-# gain by deferring the import. Deferring the client means settings are read
-# when first needed rather than at import time, and one connection pool gets
-# reused instead of a new client per call.
+# Lazy singleton so settings are read on first use and one connection pool
+# is reused. (Only the client is deferred — boto3 itself is cheap to import.)
 _s3_client = None
 
 
@@ -57,12 +40,7 @@ def _get_s3_client():
 
 
 def ensure_bucket() -> None:
-    """Create the bucket if it isn't there yet.
-
-    Called once at startup from main.py's lifespan — the same slot as
-    ensure_pgvector_extension(), and for the same reason: make sure a
-    backing service is actually ready before we start serving traffic.
-    """
+    """Create the bucket if missing. Called at startup, like ensure_pgvector_extension()."""
     client = _get_s3_client()
     try:
         existing = {bucket["Name"] for bucket in client.list_buckets().get("Buckets", [])}
@@ -75,16 +53,12 @@ def ensure_bucket() -> None:
 
 
 def unique_filename(original_filename: str) -> str:
-    """A collision-proof name that keeps the original extension — same idea
-    as the UUID filenames the on-disk version used, so two people uploading
-    `IMG_1234.jpg` never overwrite each other."""
+    """UUID name keeping the original extension, so uploads can't collide."""
     return f"{uuid4().hex}{Path(original_filename or '').suffix.lower()}"
 
 
 def build_object_key(job_id: str, category: str, filename: str) -> str:
-    """`jobs/{job_id}/{category}/{filename}` — deliberately mirrors the old
-    on-disk layout (selfie/, archive/, event_photos/) so the mapping from
-    "where it used to live" to "what its key is" stays obvious."""
+    """`jobs/{job_id}/{category}/{filename}` — mirrors the old on-disk layout."""
     return f"jobs/{job_id}/{category}/{filename}"
 
 
@@ -116,9 +90,7 @@ def object_exists(key: str) -> bool:
 
 
 def delete_prefix(prefix: str) -> None:
-    """Delete every object under a prefix — the object-storage equivalent of
-    the `shutil.rmtree(job_root)` cleanup the on-disk version did when an
-    upload failed partway through."""
+    """Delete everything under a prefix — the rmtree equivalent for cleanup."""
     client = _get_s3_client()
     try:
         paginator = client.get_paginator("list_objects_v2")
@@ -131,33 +103,12 @@ def delete_prefix(prefix: str) -> None:
 
 
 # --- Presigned URLs --------------------------------------------------------
-# The API mints these; the client uses them to talk to object storage
-# directly, so photo bytes never pass through this server during upload or
-# download. They expire (PRESIGNED_URL_TTL_SECONDS) and are therefore never
-# stored in Postgres — only the key is.
+# Minted on demand, expire, never stored in Postgres — only keys are.
 #
-# !! UPLOAD CONTRACT — verified against MinIO, not assumed !!
-# A client PUTting to a presigned upload URL must send **no Content-Type
-# header at all**. The signature covers whatever Content-Type the request
-# carries, so sending one that wasn't signed fails with 403.
-#
-# You can't fix that by signing a Content-Type either: `upload_part` doesn't
-# accept ContentType as a parameter at all (botocore rejects it outright),
-# so parts can never have a signed content type. Omitting the header is the
-# only contract that works for both parts and single PUTs.
-#
-# On Android: OkHttp's `RequestBody.create(null, bytes)` sends no
-# Content-Type. Watch out for HTTP clients that add one automatically —
-# Python's urllib does, which is exactly how this was found.
-#
-# Operational gotcha: a signature mismatch on a *large* body doesn't return
-# a clean 403 — the connection hangs until it times out. If part uploads
-# start hanging rather than failing, suspect a stray header before anything
-# else.
-#
-# Content types still get set correctly on stored objects, just server-side
-# via put_object() below (a normal signed boto3 call, where ContentType is
-# fine) — which is what matters for matched photos rendering in the app.
+# Upload contract: the client must send NO Content-Type header. SigV2 signs
+# it as a fixed field, so an unsigned one fails (403, or a hang on large
+# bodies). Signing it isn't an option either — upload_part rejects the
+# parameter. Full reasoning in DEEP_DIVE.md.
 
 
 def presign_download(key: str, ttl_seconds: int | None = None) -> str:
@@ -172,12 +123,7 @@ def presign_download(key: str, ttl_seconds: int | None = None) -> str:
 
 
 def presign_put(key: str, ttl_seconds: int | None = None) -> str:
-    """Single-shot upload URL. Used for the selfie — one small file, where
-    multipart would be pure overhead.
-
-    Deliberately signs no ContentType: see the upload contract above. The
-    client must PUT with no Content-Type header.
-    """
+    """Single-shot upload URL, used for the selfie (multipart would be overkill)."""
     try:
         return _get_s3_client().generate_presigned_url(
             "put_object",
@@ -189,15 +135,12 @@ def presign_put(key: str, ttl_seconds: int | None = None) -> str:
 
 
 # --- Multipart upload ------------------------------------------------------
-# This is what makes uploads resumable. The client uploads parts directly to
-# object storage; if the connection drops, list_uploaded_parts() says which
-# parts already landed, so only the missing ones get re-sent. We don't track
-# byte offsets ourselves — S3's protocol already does it.
+# What makes uploads resumable: list_uploaded_parts() says which parts
+# already landed, so only missing ones are re-sent. S3 tracks offsets, not us.
 
 
 def create_multipart_upload(key: str) -> str:
-    """Returns the upload_id, which must be stored (upload_jobs.zip_upload_id)
-    since every later part/complete/list call needs it."""
+    """Returns the upload_id — stored on upload_jobs, needed by every later call."""
     try:
         response = _get_s3_client().create_multipart_upload(
             Bucket=settings.s3_bucket,
@@ -230,8 +173,7 @@ def presign_upload_part(
 
 
 def list_uploaded_parts(key: str, upload_id: str) -> list[dict]:
-    """Which parts have actually landed — this is the resume mechanism.
-    Returns [{"PartNumber": int, "ETag": str}, ...] ordered by part number."""
+    """Parts that landed, as [{"PartNumber", "ETag"}, ...]. The resume mechanism."""
     client = _get_s3_client()
     try:
         parts: list[dict] = []
@@ -247,9 +189,7 @@ def list_uploaded_parts(key: str, upload_id: str) -> list[dict]:
 
 
 def complete_multipart_upload(key: str, upload_id: str, parts: list[dict]) -> None:
-    """Tell object storage to assemble the parts into one object. `parts` is
-    the {"PartNumber", "ETag"} list — normally straight from
-    list_uploaded_parts(), so the client doesn't have to track ETags itself."""
+    """Assemble the parts into one object. `parts` comes from list_uploaded_parts()."""
     try:
         _get_s3_client().complete_multipart_upload(
             Bucket=settings.s3_bucket,
@@ -262,8 +202,7 @@ def complete_multipart_upload(key: str, upload_id: str, parts: list[dict]) -> No
 
 
 def abort_multipart_upload(key: str, upload_id: str) -> None:
-    """Discards an unfinished upload and its parts. Without this, abandoned
-    uploads keep consuming storage indefinitely."""
+    """Discard an unfinished upload; otherwise its parts occupy storage forever."""
     try:
         _get_s3_client().abort_multipart_upload(
             Bucket=settings.s3_bucket, Key=key, UploadId=upload_id
@@ -298,13 +237,10 @@ async def save_upload_file(upload_file: UploadFile, destination_dir: Path) -> tu
 
 
 def extract_zip_file(zip_path: Path, destination_dir: Path) -> list[Path]:
-    """Extracts a zip to a directory, rejecting path-traversal entries.
+    """Extract a zip, rejecting path-traversal entries.
 
-    Survives the object-storage migration unchanged: after the cutover the
-    worker downloads the zip to a temp directory and calls this exactly as
-    before, then uploads each extracted photo as its own object. The
-    traversal check below is the reason this is worth reusing rather than
-    rewriting against a zip-in-memory API.
+    Reused unchanged after the cutover: the worker downloads the zip to a
+    temp dir and calls this, then uploads each photo as its own object.
     """
     destination_dir.mkdir(parents=True, exist_ok=True)
     destination_root = destination_dir.resolve()
