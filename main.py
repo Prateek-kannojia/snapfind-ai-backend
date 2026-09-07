@@ -9,6 +9,7 @@ from core.errors import AppError
 from core.settings import settings
 from db.database import Base, engine, ensure_pgvector_extension, ensure_runtime_schema
 from db import orm_models as db_models  # noqa: F401
+from services.storage_service import ensure_bucket
 
 
 @asynccontextmanager
@@ -16,6 +17,7 @@ async def lifespan(app: FastAPI):
     ensure_pgvector_extension()  # must run before create_all — see db/database.py
     Base.metadata.create_all(bind=engine)
     ensure_runtime_schema()
+    ensure_bucket()  # same idea, for object storage — see services/storage_service.py
     yield
 
 
