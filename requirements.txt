@@ -29,3 +29,8 @@ psycopg2-binary
 # (see db/orm_models.py). Only active when DATABASE_URL is Postgres — the
 # same package works fine even when SQLite is in use, it's just unused.
 pgvector
+# AWS SDK — used here to talk to MinIO over the S3 API (object storage for
+# every uploaded photo, plus presigned upload/download URLs). The same code
+# works against real AWS S3 by changing S3_ENDPOINT_URL; boto3 doesn't care
+# which S3-compatible service is on the other end.
+boto3

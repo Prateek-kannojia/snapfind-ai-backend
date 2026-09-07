@@ -23,6 +23,27 @@ services:
       timeout: 5s
       retries: 5
 
+  # MinIO speaks the S3 API, so storage code written against boto3 here works
+  # unchanged against real AWS S3 later — only the endpoint URL and credentials
+  # change. Event photos and selfies live here as objects, not as files on a
+  # local disk; Postgres stores their object keys. See DEEP_DIVE.md.
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-snapfind}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-snapfind123}
+    ports:
+      - "9000:9000"   # S3 API — what boto3 talks to
+      - "9001:9001"   # web console — browse objects at http://localhost:9001
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   api:
     build: .
     ports:
@@ -30,6 +51,10 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-snapfind}:${POSTGRES_PASSWORD:-snapfind}@postgres:5432/${POSTGRES_DB:-snapfind}
       REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-snapfind}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-snapfind123}
+      S3_BUCKET: ${S3_BUCKET:-snapfind}
     volumes:
       - deepface_weights:/app/storage/deepface
       - insightface_weights:/app/storage/insightface
@@ -39,6 +64,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      minio:
+        condition: service_healthy
 
   worker:
     build: .
@@ -47,6 +74,10 @@ services:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-snapfind}:${POSTGRES_PASSWORD:-snapfind}@postgres:5432/${POSTGRES_DB:-snapfind}
       REDIS_URL: redis://redis:6379/0
       RQ_WORKER_CLASS: default
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-snapfind}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-snapfind123}
+      S3_BUCKET: ${S3_BUCKET:-snapfind}
     volumes:
       - deepface_weights:/app/storage/deepface
       - insightface_weights:/app/storage/insightface
@@ -56,9 +87,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      minio:
+        condition: service_healthy
 
 volumes:
   postgres_data:
+  minio_data:
   deepface_weights:
   insightface_weights:
+  # uploads_data is still here only until Phase 2 moves photo storage to
+  # MinIO; once storage_service.py stops writing to local disk it goes away.
   uploads_data:

@@ -48,6 +48,19 @@ class Settings:
             "RQ_WORKER_CLASS", "simple" if os.name == "nt" else "default"
         )
         self.job_stale_after_seconds = int(os.getenv("JOB_STALE_AFTER_SECONDS", "3600"))
+        # Object storage. MinIO locally (docker-compose), any S3-compatible
+        # service in production — boto3 talks to both identically, so moving
+        # to real AWS S3 is an endpoint + credentials change, not a code
+        # change. Photos live here as objects; Postgres stores only their
+        # keys (never presigned URLs — those are minted on demand and expire).
+        self.s3_endpoint_url = os.getenv("S3_ENDPOINT_URL", "http://localhost:9000")
+        self.s3_access_key = os.getenv("S3_ACCESS_KEY", "snapfind")
+        self.s3_secret_key = os.getenv("S3_SECRET_KEY", "snapfind123")
+        self.s3_bucket = os.getenv("S3_BUCKET", "snapfind")
+        # How long a presigned download URL stays valid. Short on purpose —
+        # the client re-fetches /jobs/{id}/matches for fresh URLs if an image
+        # fails to load, so there's no need for long-lived signed links.
+        self.presigned_url_ttl_seconds = int(os.getenv("PRESIGNED_URL_TTL_SECONDS", "3600"))
 
 
 settings = Settings()
