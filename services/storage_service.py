@@ -39,6 +39,26 @@ def _get_s3_client():
     return _s3_client
 
 
+# Separate client bound to the client-reachable endpoint. Used only to sign
+# URLs — the server's own endpoint may be internal (minio:9000) and unusable
+# by a phone or browser. Signing never opens a connection, so this is cheap.
+_presign_client = None
+
+
+def _get_presign_client():
+    global _presign_client
+    if settings.s3_public_endpoint_url == settings.s3_endpoint_url:
+        return _get_s3_client()
+    if _presign_client is None:
+        _presign_client = boto3.client(
+            "s3",
+            endpoint_url=settings.s3_public_endpoint_url,
+            aws_access_key_id=settings.s3_access_key,
+            aws_secret_access_key=settings.s3_secret_key,
+        )
+    return _presign_client
+
+
 def ensure_bucket() -> None:
     """Create the bucket if missing. Called at startup, like ensure_pgvector_extension()."""
     client = _get_s3_client()
@@ -113,7 +133,7 @@ def delete_prefix(prefix: str) -> None:
 
 def presign_download(key: str, ttl_seconds: int | None = None) -> str:
     try:
-        return _get_s3_client().generate_presigned_url(
+        return _get_presign_client().generate_presigned_url(
             "get_object",
             Params={"Bucket": settings.s3_bucket, "Key": key},
             ExpiresIn=ttl_seconds or settings.presigned_url_ttl_seconds,
@@ -125,7 +145,7 @@ def presign_download(key: str, ttl_seconds: int | None = None) -> str:
 def presign_put(key: str, ttl_seconds: int | None = None) -> str:
     """Single-shot upload URL, used for the selfie (multipart would be overkill)."""
     try:
-        return _get_s3_client().generate_presigned_url(
+        return _get_presign_client().generate_presigned_url(
             "put_object",
             Params={"Bucket": settings.s3_bucket, "Key": key},
             ExpiresIn=ttl_seconds or settings.presigned_url_ttl_seconds,
@@ -156,7 +176,7 @@ def presign_upload_part(
     key: str, upload_id: str, part_number: int, ttl_seconds: int | None = None
 ) -> str:
     try:
-        return _get_s3_client().generate_presigned_url(
+        return _get_presign_client().generate_presigned_url(
             "upload_part",
             Params={
                 "Bucket": settings.s3_bucket,

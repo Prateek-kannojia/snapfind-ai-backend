@@ -54,6 +54,13 @@ class Settings:
         # change. Photos live here as objects; Postgres stores only their
         # keys (never presigned URLs — those are minted on demand and expire).
         self.s3_endpoint_url = os.getenv("S3_ENDPOINT_URL", "http://localhost:9000")
+        # Where *clients* reach storage. Differs from the above whenever the
+        # server talks to storage on an internal address the client can't
+        # resolve (in Docker: minio:9000 internally, localhost:9000 outside).
+        # Presigned URLs are built from this; defaults to the internal one.
+        self.s3_public_endpoint_url = os.getenv(
+            "S3_PUBLIC_ENDPOINT_URL", os.getenv("S3_ENDPOINT_URL", "http://localhost:9000")
+        )
         self.s3_access_key = os.getenv("S3_ACCESS_KEY", "snapfind")
         self.s3_secret_key = os.getenv("S3_SECRET_KEY", "snapfind123")
         self.s3_bucket = os.getenv("S3_BUCKET", "snapfind")
