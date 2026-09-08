@@ -7,14 +7,17 @@ from pathlib import Path
 class Settings:
     def __init__(self) -> None:
         base_dir = Path(__file__).resolve().parent.parent
-        default_database_path = base_dir / "app.db"
         default_deepface_home = base_dir / "storage" / "deepface"
         default_insightface_home = base_dir / "storage" / "insightface"
 
         self.app_name = os.getenv("APP_NAME", "Event Photo Finder API")
         self.app_version = os.getenv("APP_VERSION", "0.1.0")
+        # Postgres only — the embedding column is a real pgvector type, so
+        # there's no second backend to fall back to. docker-compose points
+        # this at its own postgres service.
         self.database_url = os.getenv(
-            "DATABASE_URL", f"sqlite:///{default_database_path.as_posix()}"
+            "DATABASE_URL",
+            "postgresql+psycopg2://snapfind:snapfind@localhost:5432/snapfind",
         )
         self.deepface_home = Path(
             os.getenv("DEEPFACE_HOME", str(default_deepface_home))

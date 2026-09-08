@@ -55,14 +55,8 @@ class EventPhoto(Base):
     job_id: Mapped[str] = mapped_column(ForeignKey("upload_jobs.id"), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     object_key: Mapped[str] = mapped_column(String(500), nullable=False)
-    # A real pgvector column on Postgres (production/Docker), a JSON-text
-    # fallback on SQLite (zero-setup local dev — see core/settings.py; the
-    # `vector` extension and type don't exist there). Both paths store the
-    # same 512 ArcFace numbers; services/face_matcher.py handles the two
-    # representations via _serialize_embedding()/_deserialize_embedding().
-    embedding: Mapped[Any | None] = mapped_column(
-        Text().with_variant(Vector(512), "postgresql"), nullable=True
-    )
+    # The 512 ArcFace numbers. NULL until the first processing run.
+    embedding: Mapped[Any | None] = mapped_column(Vector(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     job: Mapped[UploadJob] = relationship(back_populates="event_photos")

@@ -11,9 +11,7 @@ class Base(DeclarativeBase):
     pass
 
 
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-
-engine = create_engine(settings.database_url, connect_args=connect_args)
+engine = create_engine(settings.database_url)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
@@ -26,39 +24,7 @@ def get_db():
 
 
 def ensure_pgvector_extension() -> None:
-    """Enables the pgvector extension on Postgres. Must run before
-    Base.metadata.create_all(), since EventPhoto.embedding is a
-    Vector(512) column on Postgres (see db/orm_models.py) and Postgres
-    can't create that column type until the extension exists. No-op on
-    SQLite, which doesn't have this concept at all.
-    """
-    if settings.database_url.startswith("sqlite"):
-        return
+    """Must run before create_all() — Postgres can't create the Vector(512)
+    column on event_photos until the extension exists."""
     with engine.begin() as connection:
         connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-
-
-def ensure_runtime_schema() -> None:
-    if not settings.database_url.startswith("sqlite"):
-        return
-
-    with engine.connect() as connection:
-        columns = {
-            row[1]
-            for row in connection.execute(text("PRAGMA table_info(upload_jobs)")).all()
-        }
-    missing_columns = {
-        "queued_at": "DATETIME",
-        "processing_started_at": "DATETIME",
-        "rq_job_id": "VARCHAR(255)",
-        "last_error": "TEXT",
-        "zip_object_key": "VARCHAR(500)",
-        "zip_upload_id": "VARCHAR(255)",
-    }
-
-    with engine.begin() as connection:
-        for column_name, column_type in missing_columns.items():
-            if column_name not in columns:
-                connection.execute(
-                    text(f"ALTER TABLE upload_jobs ADD COLUMN {column_name} {column_type}")
-                )
