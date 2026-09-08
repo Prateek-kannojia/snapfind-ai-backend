@@ -28,7 +28,7 @@ class UploadJob(Base):
         SqlEnum(JobStatus), default=JobStatus.pending, nullable=False
     )
     selfie_filename: Mapped[str] = mapped_column(String(255), nullable=False)
-    selfie_storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    selfie_object_key: Mapped[str] = mapped_column(String(500), nullable=False)
     # Object key of the uploaded zip, and the multipart upload id needed to
     # resume/complete it. Nullable so existing rows survive the migration.
     zip_object_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -54,7 +54,7 @@ class EventPhoto(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_id: Mapped[str] = mapped_column(ForeignKey("upload_jobs.id"), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
-    storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(500), nullable=False)
     # A real pgvector column on Postgres (production/Docker), a JSON-text
     # fallback on SQLite (zero-setup local dev — see core/settings.py; the
     # `vector` extension and type don't exist there). Both paths store the

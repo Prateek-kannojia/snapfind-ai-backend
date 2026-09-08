@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from core.errors import AppError
 from core.settings import settings
 from db.orm_models import EventPhoto, MatchedPhoto, UploadJob
+from services import storage_service as storage
 
 # Set once at import time so every DeepFace call uses the right home directory.
 settings.deepface_home.mkdir(parents=True, exist_ok=True)
@@ -89,7 +90,7 @@ class SelfieFaceNotDetectedError(FaceMatchError):
 
 class _Photo(NamedTuple):
     id: int
-    storage_path: str
+    object_key: str
     embedding: Any | None  # JSON str (SQLite) or a pgvector value (Postgres) — see db/orm_models.py
 
 
@@ -122,28 +123,29 @@ def _cosine_distance(source: list[float], target: list[float]) -> float:
     return 1 - max(min(similarity, 1.0), -1.0)
 
 
-def _validate_image_path(image_path: str) -> None:
-    path = Path(image_path)
-    if not path.exists():
-        raise FaceMatchError(f"Image file not found: {path}")
-    if path.suffix.lower() not in settings.allowed_image_extensions:
+def _validate_image_key(object_key: str) -> None:
+    """Extension check only — existence is proven by the fetch itself."""
+    if Path(object_key).suffix.lower() not in settings.allowed_image_extensions:
         raise FaceMatchError(
             "Image must have one of these extensions: "
             + ", ".join(sorted(settings.allowed_image_extensions))
         )
 
 
-def _load_resized_image(image_path: str, max_dimension: int) -> np.ndarray:
-    """Load an image and shrink it so its longest side is at most max_dimension.
+def _load_resized_image(object_key: str, max_dimension: int) -> np.ndarray:
+    """Fetch an image from object storage and shrink it to max_dimension.
 
-    Detection + embedding cost scales with pixel count, and phone photos are
-    often 3000-4000px on the long side while faces only need a few hundred
-    pixels to detect and embed accurately. Downscaling here is the single
-    biggest, lowest-risk speedup available on CPU (see SUMMARY.md).
+    Detection/embedding cost scales with pixel count, and phone photos are
+    far larger than a face needs — this is the biggest CPU win available.
     """
-    image = cv2.imread(image_path)
+    try:
+        data = storage.get_object(object_key)
+    except storage.StorageError as exc:
+        raise FaceMatchError(f"Could not read image '{object_key}': {exc}") from exc
+
+    image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if image is None:
-        raise FaceMatchError(f"Could not read image file: {image_path}")
+        raise FaceMatchError(f"Could not decode image '{object_key}'")
 
     height, width = image.shape[:2]
     longest_side = max(height, width)
@@ -203,13 +205,13 @@ def _selfie_embedding(image_array: np.ndarray) -> list[float]:
     return result[0]["embedding"]
 
 
-def _embedding_for_image(image_path: str, *, is_selfie: bool) -> list[float]:
-    _validate_image_path(image_path)
+def _embedding_for_image(object_key: str, *, is_selfie: bool) -> list[float]:
+    _validate_image_key(object_key)
 
     max_dimension = (
         settings.selfie_max_dimension if is_selfie else settings.event_photo_max_dimension
     )
-    image_array = _load_resized_image(image_path, max_dimension)
+    image_array = _load_resized_image(object_key, max_dimension)
 
     if is_selfie:
         return _selfie_embedding(image_array)
@@ -230,7 +232,7 @@ def _embed_and_score_event_photo(
             image_embedding = _deserialize_embedding(photo.embedding)
             new_embedding_to_save = None
         else:
-            image_embedding = _embedding_for_image(photo.storage_path, is_selfie=False)
+            image_embedding = _embedding_for_image(photo.object_key, is_selfie=False)
             new_embedding_to_save = _serialize_embedding(image_embedding)
 
         distance = _cosine_distance(selfie_embedding, image_embedding)
@@ -247,14 +249,14 @@ def build_matches_for_job(
 
     # Compute selfie embedding first — this also warms the DeepFace model in
     # memory so all worker threads find it already loaded.
-    selfie_embedding = _embedding_for_image(job.selfie_storage_path, is_selfie=True)
+    selfie_embedding = _embedding_for_image(job.selfie_object_key, is_selfie=True)
 
     # Same warm-up idea for the insightface detector used for event photos:
     # build it once here (single-threaded) so worker threads only ever read
     # from the already-built singleton, never race to build it concurrently.
     _get_insightface_app()
 
-    photos = [_Photo(p.id, p.storage_path, p.embedding) for p in event_photos]
+    photos = [_Photo(p.id, p.object_key, p.embedding) for p in event_photos]
     orm_by_id = {p.id: p for p in event_photos}
 
     matches: list[MatchedPhoto] = []

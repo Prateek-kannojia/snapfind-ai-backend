@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14,9 +15,12 @@ from api.schemas import (
 from core.errors import AppError
 from core.settings import settings
 from db.database import SessionLocal
-from db.orm_models import JobStatus, MatchedPhoto, UploadJob
+from db.orm_models import EventPhoto, JobStatus, MatchedPhoto, UploadJob
+from services import storage_service as storage
 from services.face_matcher import build_matches_for_job
 from services.queue_service import enqueue_face_matching_job
+from services.storage_service import extract_zip_file
+from services.upload_service import uploaded_part_numbers
 
 
 class JobServiceError(AppError):
@@ -41,7 +45,7 @@ class MatchNotFoundError(JobServiceError):
 
 
 class MatchFileMissingError(JobServiceError):
-    def __init__(self, message: str = "Matched photo file not found on disk") -> None:
+    def __init__(self, message: str = "Matched photo file is no longer available") -> None:
         super().__init__(message, status_code=404, error_code="match_file_missing")
 
 
@@ -58,6 +62,11 @@ class JobAlreadyProcessingError(JobServiceError):
 class NoEventPhotosError(JobServiceError):
     def __init__(self, message: str = "Job has no event photos to process") -> None:
         super().__init__(message, status_code=400, error_code="no_event_photos")
+
+
+class UploadNotCompleteError(JobServiceError):
+    def __init__(self, message: str = "Upload is not complete for this job") -> None:
+        super().__init__(message, status_code=409, error_code="upload_not_complete")
 
 
 class QueueUnavailableError(JobServiceError):
@@ -119,6 +128,7 @@ def _build_job_summary_response(job: UploadJob) -> JobSummaryResponse:
         event_photo_count=job.event_photo_count,
         matched_photo_count=len(job.matched_photos),
         created_at=job.created_at,
+        uploaded_parts=uploaded_part_numbers(job),
     )
 
 
@@ -134,7 +144,9 @@ def _build_match_list_response(job: UploadJob) -> MatchListResponse:
                 event_photo_id=match.event_photo_id,
                 filename=match.event_photo.original_filename,
                 match_distance=match.match_distance,
-                download_url=f"/jobs/{job.id}/matches/{match.id}/download",
+                # Presigned, so the client fetches straight from object
+                # storage. Expires — re-fetch this endpoint for fresh URLs.
+                download_url=storage.presign_download(match.event_photo.object_key),
                 created_at=match.created_at,
             )
             for match in matches
@@ -158,6 +170,11 @@ def _mark_job_failed(db: Session, job_id: str, error: str | None = None) -> None
     job.status = JobStatus.failed
     job.last_error = error
     db.commit()
+
+
+def load_job_or_raise(db: Session, job_id: str) -> UploadJob:
+    """The job row itself, for routes that need more than the summary."""
+    return _get_job_or_raise(db, job_id)
 
 
 def get_job_detail(db: Session, job_id: str) -> JobSummaryResponse:
@@ -211,9 +228,11 @@ def enqueue_job_processing(db: Session, job_id: str, threshold: float) -> JobSum
         raise JobAlreadyProcessingError()
 
     job = _get_job_or_raise(db, job_id)
-    if not job.event_photos:
+    # Photos don't exist yet — the worker extracts them. What must be true
+    # here is that the zip upload actually finished.
+    if not job.zip_object_key or job.zip_upload_id is not None:
         db.rollback()
-        raise NoEventPhotosError()
+        raise UploadNotCompleteError()
 
     db.commit()
     try:
@@ -246,15 +265,54 @@ def _claim_queued_job(db: Session, job_id: str) -> UploadJob | None:
     if result.rowcount == 0:
         return None
 
-    job = _get_job_or_raise(db, job_id)
-    if not job.event_photos:
-        job.status = JobStatus.failed
-        job.last_error = "Job has no event photos to process"
-        db.commit()
-        return None
-
+    # No event-photo check here any more: at claim time the zip hasn't been
+    # extracted yet. _extract_photos_if_needed() handles an empty zip.
     db.commit()
     return _get_job_or_raise(db, job_id)
+
+
+def _extract_photos_if_needed(db: Session, job: UploadJob) -> None:
+    """Unpack the uploaded zip into one object per photo.
+
+    Idempotent: a retry after a failed match run skips straight past this
+    rather than re-downloading and re-uploading everything again.
+    """
+    if job.event_photos:
+        return
+    if not job.zip_object_key:
+        raise NoEventPhotosError("Job has no uploaded zip")
+
+    zip_bytes = storage.get_object(job.zip_object_key)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_root = Path(tmp)
+        zip_path = tmp_root / "archive.zip"
+        zip_path.write_bytes(zip_bytes)
+        extracted = extract_zip_file(zip_path, tmp_root / "extracted")
+
+        images = [
+            path
+            for path in extracted
+            if path.suffix.lower() in settings.allowed_image_extensions
+        ]
+        if not images:
+            raise NoEventPhotosError("Zip file does not contain any supported image files")
+        if len(images) > settings.max_event_photos:
+            raise NoEventPhotosError(
+                f"Zip contains more than {settings.max_event_photos} supported images"
+            )
+
+        for path in images:
+            key = storage.build_object_key(
+                job.id, "event_photos", storage.unique_filename(path.name)
+            )
+            storage.put_object(key, path.read_bytes())
+            db.add(
+                EventPhoto(job_id=job.id, original_filename=path.name, object_key=key)
+            )
+
+    job.event_photo_count = len(images)
+    db.commit()
 
 
 def run_job_processing(job_id: str, threshold: float) -> None:
@@ -264,6 +322,7 @@ def run_job_processing(job_id: str, threshold: float) -> None:
         job = _claim_queued_job(db, job_id)
         if job is None:
             return
+        _extract_photos_if_needed(db, job)
         matches = build_matches_for_job(db, job, list(job.event_photos), threshold)
         _replace_job_matches(db, job, matches)
         job.last_error = None
@@ -280,9 +339,10 @@ def get_job_matches(db: Session, job_id: str) -> MatchListResponse:
     return _build_match_list_response(job)
 
 
-def get_match_file(db: Session, job_id: str, match_id: int) -> tuple[Path, str]:
+def get_match_download_url(db: Session, job_id: str, match_id: int) -> str:
+    """Presigned URL for one matched photo. The route redirects to it, so the
+    photo bytes never pass through this server."""
     match = _get_match_or_raise(db, job_id, match_id)
-    file_path = Path(match.event_photo.storage_path)
-    if not file_path.exists():
+    if not storage.object_exists(match.event_photo.object_key):
         raise MatchFileMissingError()
-    return file_path, match.event_photo.original_filename
+    return storage.presign_download(match.event_photo.object_key)
