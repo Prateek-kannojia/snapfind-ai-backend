@@ -7,7 +7,6 @@ from pathlib import Path
 class Settings:
     def __init__(self) -> None:
         base_dir = Path(__file__).resolve().parent.parent
-        default_upload_dir = base_dir / "storage" / "uploads"
         default_database_path = base_dir / "app.db"
         default_deepface_home = base_dir / "storage" / "deepface"
         default_insightface_home = base_dir / "storage" / "insightface"
@@ -17,7 +16,6 @@ class Settings:
         self.database_url = os.getenv(
             "DATABASE_URL", f"sqlite:///{default_database_path.as_posix()}"
         )
-        self.upload_root = Path(os.getenv("UPLOAD_ROOT", str(default_upload_dir))).resolve()
         self.deepface_home = Path(
             os.getenv("DEEPFACE_HOME", str(default_deepface_home))
         ).resolve()

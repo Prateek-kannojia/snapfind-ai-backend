@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import mimetypes
 import shutil
 import zipfile
@@ -8,7 +7,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import boto3
-from fastapi import UploadFile
 
 from core.settings import settings
 
@@ -231,36 +229,14 @@ def abort_multipart_upload(key: str, upload_id: str) -> None:
         raise StorageError(f"Could not abort multipart upload for '{key}': {exc}") from exc
 
 
-# ---------------------------------------------------------------------------
-# Local filesystem (still in use until the Phase 4 cutover, then deleted)
-# ---------------------------------------------------------------------------
-
-
-def ensure_upload_root() -> None:
-    settings.upload_root.mkdir(parents=True, exist_ok=True)
-
-
-async def save_upload_file(upload_file: UploadFile, destination_dir: Path) -> tuple[str, str]:
-    original_name = Path(upload_file.filename or "").name
-    extension = Path(original_name).suffix.lower()
-    unique_name = f"{uuid4().hex}{extension}"
-
-    destination_dir.mkdir(parents=True, exist_ok=True)
-    destination_path = destination_dir / unique_name
-
-    loop = asyncio.get_running_loop()
-    with destination_path.open("wb") as buffer:
-        await loop.run_in_executor(None, shutil.copyfileobj, upload_file.file, buffer)
-
-    await upload_file.close()
-    return original_name, str(destination_path.resolve())
+# --- Zip handling ----------------------------------------------------------
 
 
 def extract_zip_file(zip_path: Path, destination_dir: Path) -> list[Path]:
     """Extract a zip, rejecting path-traversal entries.
 
-    Reused unchanged after the cutover: the worker downloads the zip to a
-    temp dir and calls this, then uploads each photo as its own object.
+    The worker downloads the zip to a temp dir, calls this, then uploads each
+    photo as its own object. The temp dir is the only local disk we still use.
     """
     destination_dir.mkdir(parents=True, exist_ok=True)
     destination_root = destination_dir.resolve()

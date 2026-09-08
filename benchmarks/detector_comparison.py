@@ -7,8 +7,7 @@ retinaface) are not dead — they're preserved here, fully runnable, so the
 evolution of the project (and the actual measured reasons for each swap) can
 be demonstrated and reproduced instead of just described in a README.
 
-What this measures, against the real sample photos already sitting in the
-backend's storage/uploads/ from manual testing:
+What this measures, against whatever photos you put in benchmarks/sample_photos/:
   1. Detection accuracy  - did each detector find a face at all?
   2. Detection speed     - how long does each detector take per photo?
   3. Embedding agreement - for the two detectors that actually work
@@ -21,10 +20,12 @@ backend's storage/uploads/ from manual testing:
 Requires this backend's virtual environment (this script only uses
 dependencies already listed in requirements.txt).
 
-Usage (from the Face_recognition/ repo root):
-    venv\\Scripts\\python.exe benchmarks\\detector_comparison.py [job_id]
+Photos are read from benchmarks/sample_photos/, which is gitignored — drop
+your own in there. Deliberately not committed: they're photos of real people,
+and this repo is public.
 
-If job_id is omitted, the first job directory with event photos is used.
+Usage (from the Face_recognition/ repo root):
+    venv\\Scripts\\python.exe benchmarks\\detector_comparison.py [photo_folder]
 """
 from __future__ import annotations
 
@@ -60,18 +61,24 @@ def p(msg: str) -> None:
     print(msg, flush=True)
 
 
-def find_job_dir(job_id: str | None) -> Path:
-    uploads = settings.upload_root
-    if job_id:
-        job_dir = uploads / job_id
-        if not job_dir.exists():
-            raise SystemExit(f"No such job directory: {job_dir}")
-        return job_dir
-    for candidate in sorted(uploads.iterdir()):
-        photos = list((candidate / "event_photos").glob("*")) if (candidate / "event_photos").exists() else []
-        if photos:
-            return candidate
-    raise SystemExit(f"No job with event photos found under {uploads}")
+SAMPLES_DIR = Path(__file__).resolve().parent / "sample_photos"
+
+
+def find_photos(folder: Path) -> list[Path]:
+    if not folder.exists():
+        raise SystemExit(
+            f"No photo folder at {folder}\n"
+            f"Create it and drop a few real photos in (it's gitignored), "
+            f"or pass a folder path as an argument."
+        )
+    photos = sorted(
+        path
+        for path in folder.iterdir()
+        if path.suffix.lower() in settings.allowed_image_extensions
+    )
+    if not photos:
+        raise SystemExit(f"No supported images found in {folder}")
+    return photos
 
 
 def resize(image_path: Path, max_dim: int):
@@ -182,10 +189,9 @@ def run_insightface(photos: list[Path]) -> dict:
 
 
 def main() -> None:
-    job_id = sys.argv[1] if len(sys.argv) > 1 else None
-    job_dir = find_job_dir(job_id)
-    photos = sorted((job_dir / "event_photos").glob("*"))
-    p(f"Using job: {job_dir.name} ({len(photos)} event photos)")
+    folder = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else SAMPLES_DIR
+    photos = find_photos(folder)
+    p(f"Using {len(photos)} photos from {folder}")
 
     results = [run_opencv(photos), run_retinaface(photos), run_insightface(photos)]
 
@@ -208,7 +214,7 @@ def main() -> None:
         p(f"{r['name']:<14}{r['detected']}/{n:<10}{avg_ms:<16.0f}")
 
     RESULTS_PATH.write_text(json.dumps({
-        "job_id": job_dir.name,
+        "photo_folder": str(folder),
         "photo_count": len(photos),
         "detectors": [{"name": r["name"], "detected": r["detected"], "total": r["total"],
                         "avg_ms_per_photo": (r["total_time_s"] / r["total"] * 1000) if r["total"] else 0}

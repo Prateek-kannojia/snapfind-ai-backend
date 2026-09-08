@@ -60,7 +60,6 @@ services:
     volumes:
       - deepface_weights:/app/storage/deepface
       - insightface_weights:/app/storage/insightface
-      - uploads_data:/app/storage/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,7 +84,6 @@ services:
     volumes:
       - deepface_weights:/app/storage/deepface
       - insightface_weights:/app/storage/insightface
-      - uploads_data:/app/storage/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,6 +97,3 @@ volumes:
   minio_data:
   deepface_weights:
   insightface_weights:
-  # uploads_data is still here only until Phase 2 moves photo storage to
-  # MinIO; once storage_service.py stops writing to local disk it goes away.
-  uploads_data:

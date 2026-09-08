@@ -4,3 +4,5 @@ __pycache__/
 app.db
 storage/
 .env
+# Real photos of real people — kept out of a public repo on purpose.
+benchmarks/sample_photos/

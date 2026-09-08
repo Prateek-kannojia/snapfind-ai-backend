@@ -16,10 +16,14 @@ Only the **Detect** step changed across the three rounds below — ArcFace has b
 
 ## Results
 
-Measured against 4 real sample photos in `storage/uploads/`. Full output: [`results.json`](results.json). Reproduce (from the `Face_recognition/` repo root):
+Measured against 4 real sample photos. Full output: [`results.json`](results.json).
+
+To reproduce, drop a few photos into `benchmarks/sample_photos/` (gitignored — the originals aren't committed because they're photos of real people and this repo is public), then from the `Face_recognition/` repo root:
 
 ```powershell
 venv\Scripts\python.exe benchmarks\detector_comparison.py
+# or point it anywhere:
+venv\Scripts\python.exe benchmarks\detector_comparison.py C:\some\folder
 ```
 
 | Detector | Type | Detected | Avg time/photo (CPU) | Verdict |

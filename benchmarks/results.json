@@ -1,24 +1,24 @@
 {
-  "job_id": "24c8ea7c-093a-4694-b33d-9a4585978a98",
+  "photo_folder": "C:\\Users\\PRATEEK\\AndroidStudioProjects\\SnapFind AI app-back\\Face_recognition\\benchmarks\\sample_photos",
   "photo_count": 4,
   "detectors": [
     {
       "name": "opencv",
       "detected": 0,
       "total": 4,
-      "avg_ms_per_photo": 111.11392499879003
+      "avg_ms_per_photo": 117.37342504784465
     },
     {
       "name": "retinaface",
       "detected": 4,
       "total": 4,
-      "avg_ms_per_photo": 11726.89139994327
+      "avg_ms_per_photo": 13100.147624965757
     },
     {
       "name": "insightface",
       "detected": 4,
       "total": 4,
-      "avg_ms_per_photo": 319.21032490208745
+      "avg_ms_per_photo": 1074.862250010483
     }
   ],
   "embedding_agreement_retinaface_vs_insightface": {
