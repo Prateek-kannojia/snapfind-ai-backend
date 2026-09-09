@@ -6,3 +6,8 @@ storage/
 .env
 # Real photos of real people — kept out of a public repo on purpose.
 benchmarks/sample_photos/
+
+# Generated test corpus (composited LFW faces) + run logs
+pipeline_audit/corpus/
+pipeline_audit/*_results.json
+pipeline_audit/eval_log.txt

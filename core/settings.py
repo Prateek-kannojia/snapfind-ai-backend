@@ -42,6 +42,17 @@ class Settings:
         # downscaled harder since there are many of them and speed matters more.
         self.selfie_max_dimension = int(os.getenv("SELFIE_MAX_DIMENSION", "1024"))
         self.event_photo_max_dimension = int(os.getenv("EVENT_PHOTO_MAX_DIMENSION", "800"))
+        # SCRFD's input size. Deliberately NOT tied to the downscale settings
+        # above: measured, det_size=3200 makes the detector lose large faces
+        # entirely (a 588,187px2 face becomes 730px2), because its anchor
+        # scales stop matching. Detection is stable at 640-1600 regardless of
+        # how big the source image is, so this stays pinned.
+        self.face_detector_size = int(os.getenv("FACE_DETECTOR_SIZE", "800"))
+        # Faces are cropped from the ORIGINAL image, not the downscaled one.
+        # Measured: two different people 0.1596 apart on 17px crops (a false
+        # match at threshold 0.68) vs 0.7144 on 73px crops. Detection is cheap
+        # at low resolution; embedding needs real pixels.
+        self.crop_from_original = os.getenv("CROP_FROM_ORIGINAL", "true").lower() != "false"
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.rq_queue_name = os.getenv("RQ_QUEUE_NAME", "face-matching")
         self.rq_job_timeout_seconds = int(os.getenv("RQ_JOB_TIMEOUT_SECONDS", "1800"))

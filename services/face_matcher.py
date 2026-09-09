@@ -41,7 +41,7 @@ def _get_insightface_app():
             allowed_modules=["detection"],  # we only use detection; embedding stays DeepFace/ArcFace
             root=str(settings.insightface_home),
         )
-        app.prepare(ctx_id=-1, det_size=(settings.event_photo_max_dimension,) * 2)  # ctx_id=-1 = CPU
+        app.prepare(ctx_id=-1, det_size=(settings.face_detector_size,) * 2)  # ctx_id=-1 = CPU
         _insightface_app = app
     return _insightface_app
 
@@ -114,12 +114,8 @@ def _validate_image_key(object_key: str) -> None:
         )
 
 
-def _load_resized_image(object_key: str, max_dimension: int) -> np.ndarray:
-    """Fetch an image from object storage and shrink it to max_dimension.
-
-    Detection/embedding cost scales with pixel count, and phone photos are
-    far larger than a face needs — this is the biggest CPU win available.
-    """
+def _load_image(object_key: str) -> np.ndarray:
+    """Fetch and decode at full resolution — no downscaling."""
     try:
         data = storage.get_object(object_key)
     except storage.StorageError as exc:
@@ -128,40 +124,79 @@ def _load_resized_image(object_key: str, max_dimension: int) -> np.ndarray:
     image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise FaceMatchError(f"Could not decode image '{object_key}'")
-
-    height, width = image.shape[:2]
-    longest_side = max(height, width)
-    if longest_side > max_dimension:
-        scale = max_dimension / longest_side
-        new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
-        image = cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
-
     return image
 
 
-def _event_photo_embedding(image_array: np.ndarray) -> list[float]:
-    """Detect + align with a lightweight ONNX detector (insightface SCRFD),
-    then embed with DeepFace's ArcFace via detector_backend="skip" since the
-    face is already cropped and aligned to the standard ArcFace convention.
-    """
-    from insightface.utils import face_align
+def _downscale(image: np.ndarray, max_dimension: int) -> np.ndarray:
+    height, width = image.shape[:2]
+    longest_side = max(height, width)
+    if longest_side <= max_dimension:
+        return image
+    scale = max_dimension / longest_side
+    new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
 
-    app = _get_insightface_app()
-    faces = app.get(image_array)
-    if not faces:
-        raise FaceMatchError("Could not detect a face in one of the event photos")
 
-    # Largest face = most prominent person in the photo. Matches how a
-    # single event photo is judged: is the target person visibly in it.
-    best = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
-    aligned = face_align.norm_crop(image_array, best.kps, image_size=112, mode="arcface")
+def _event_photo_face_embeddings(object_key: str) -> list[list[float]]:
+    """Every face in an event photo: detect small, crop from the original."""
+    _validate_image_key(object_key)
+    original = _load_image(object_key)
+    detect_image = _downscale(original, settings.event_photo_max_dimension)
+    crop_image = original if settings.crop_from_original else detect_image
+    try:
+        return _event_photo_embeddings(detect_image, crop_image)
+    except FaceMatchError:
+        raise
+    except Exception as exc:
+        raise FaceMatchError("Could not detect a face in one of the event photos") from exc
 
+
+def _embed_aligned(aligned: np.ndarray) -> list[float]:
+    """Embed an already-detected, already-aligned 112x112 face crop."""
     result = _get_deepface().represent(
         img_path=aligned, model_name=DEFAULT_MODEL, detector_backend="skip", enforce_detection=False
     )
     if not result:
-        raise FaceMatchError("Could not generate a face embedding for an event photo")
+        raise FaceMatchError("Could not generate a face embedding")
     return result[0]["embedding"]
+
+
+def _event_photo_embeddings(
+    detect_image: np.ndarray, crop_image: np.ndarray | None = None
+) -> list[list[float]]:
+    """Embed EVERY face in an event photo, not just the biggest one.
+
+    Two images, deliberately: detection runs on `detect_image` (downscaled,
+    cheap) while crops come from `crop_image` (the original, full detail).
+    Landmarks are scaled between the two. Detection doesn't need pixels;
+    embedding does.
+
+    Returns one embedding per detected face. The caller scores all of them
+    and keeps the closest — picking a single face by size guesses at which
+    person the user meant, and measurably guesses wrong.
+    """
+    from insightface.utils import face_align
+
+    app = _get_insightface_app()
+    faces = app.get(detect_image)
+    if not faces:
+        raise FaceMatchError("Could not detect a face in one of the event photos")
+
+    source = crop_image if crop_image is not None else detect_image
+    scale = source.shape[1] / detect_image.shape[1]
+
+    embeddings: list[list[float]] = []
+    for face in faces:
+        kps = face.kps * scale if scale != 1 else face.kps
+        aligned = face_align.norm_crop(source, kps, image_size=112, mode="arcface")
+        try:
+            embeddings.append(_embed_aligned(aligned))
+        except FaceMatchError:
+            continue  # one bad face shouldn't sink the whole photo
+
+    if not embeddings:
+        raise FaceMatchError("Could not generate a face embedding for an event photo")
+    return embeddings
 
 
 def _selfie_embedding(image_array: np.ndarray) -> list[float]:
@@ -188,37 +223,41 @@ def _selfie_embedding(image_array: np.ndarray) -> list[float]:
 
 
 def _embedding_for_image(object_key: str, *, is_selfie: bool) -> list[float]:
+    """Selfie entry point. Event photos go through
+    _event_photo_face_embeddings(), which returns every face rather than one."""
     _validate_image_key(object_key)
-
-    max_dimension = (
-        settings.selfie_max_dimension if is_selfie else settings.event_photo_max_dimension
+    if not is_selfie:
+        raise ValueError("event photos use _event_photo_face_embeddings()")
+    return _selfie_embedding(
+        _downscale(_load_image(object_key), settings.selfie_max_dimension)
     )
-    image_array = _load_resized_image(object_key, max_dimension)
-
-    if is_selfie:
-        return _selfie_embedding(image_array)
-
-    try:
-        return _event_photo_embedding(image_array)
-    except FaceMatchError:
-        raise
-    except Exception as exc:
-        raise FaceMatchError("Could not detect a face in one of the event photos") from exc
 
 
 def _embed_and_score_event_photo(
     selfie_embedding: list[float], photo: _Photo
 ) -> tuple[int, float | None, Any | None]:
+    """Score a photo against the selfie by its CLOSEST face.
+
+    A photo matches if anyone in it matches, so every face is scored and the
+    minimum wins. Picking one face by size guessed at which person the user
+    meant — measured wrong on real photos, where two faces differed by 1.3%
+    in area but 0.71 in embedding distance.
+
+    The winning face's embedding is what gets cached: an EventPhoto row
+    belongs to exactly one job, so it's only ever compared against this one
+    selfie, and the closest face doesn't change when the threshold does.
+    """
     try:
         if photo.embedding is not None:
-            image_embedding = list(photo.embedding)  # cached
-            new_embedding_to_save = None
+            embeddings = [list(photo.embedding)]  # cached winner
+            cache_result = False
         else:
-            image_embedding = _embedding_for_image(photo.object_key, is_selfie=False)
-            new_embedding_to_save = image_embedding
+            embeddings = _event_photo_face_embeddings(photo.object_key)
+            cache_result = True
 
-        distance = _cosine_distance(selfie_embedding, image_embedding)
-        return photo.id, distance, new_embedding_to_save
+        distances = [_cosine_distance(selfie_embedding, e) for e in embeddings]
+        best = min(range(len(distances)), key=distances.__getitem__)
+        return photo.id, distances[best], embeddings[best] if cache_result else None
     except FaceMatchError:
         return photo.id, None, None
 
