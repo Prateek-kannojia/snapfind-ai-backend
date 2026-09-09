@@ -1,0 +1,371 @@
+{
+  "folder": "C:\\Users\\PRATEEK\\AndroidStudioProjects\\SnapFind AI app-back\\Face_recognition\\benchmarks\\sample_photos",
+  "selfie": "selfie.jpg",
+  "photo_count": 4,
+  "faces_found": 4,
+  "labels": {
+    "SELFIE": "selfie.jpg",
+    "P1": "IMG_20250301_101253092_HDR.jpg",
+    "P2": "IMG_20250301_114959813_HDR.jpg",
+    "P3": "IMG_20250301_115003398_HDR.jpg",
+    "P4": "IMG_20250302_155231085_HDR.jpg"
+  },
+  "detector": "insightface SCRFD det_500m.onnx (constant)",
+  "embedders": {
+    "deepface": {
+      "model": "ArcFace (TensorFlow)",
+      "size_mb": 137,
+      "dims": 512,
+      "avg_ms": 295.2992998994887,
+      "android_capable": false
+    },
+    "mbf": {
+      "model": "w600k_mbf.onnx (MobileFaceNet)",
+      "size_mb": 13.6,
+      "dims": 512,
+      "avg_ms": 6.267500016838312,
+      "avg_ms_1_thread": 14.466260187327862,
+      "android_capable": true
+    }
+  },
+  "avg_detect_ms": 55.667580012232065,
+  "selfie_distances": {
+    "IMG_20250301_101253092_HDR.jpg": {
+      "deepface": 0.9679743877033988,
+      "mbf": 0.8852132176283639
+    },
+    "IMG_20250301_114959813_HDR.jpg": {
+      "deepface": 0.9797772677013256,
+      "mbf": 0.6738368724065751
+    },
+    "IMG_20250301_115003398_HDR.jpg": {
+      "deepface": 0.9689170228226878,
+      "mbf": 0.738937009334498
+    },
+    "IMG_20250302_155231085_HDR.jpg": {
+      "deepface": 0.5915334111523516,
+      "mbf": 0.5056566719106194
+    }
+  },
+  "threshold_sweep": [
+    {
+      "threshold": 0.3,
+      "deepface_matches": [],
+      "mbf_matches": [],
+      "agree": true
+    },
+    {
+      "threshold": 0.4,
+      "deepface_matches": [],
+      "mbf_matches": [],
+      "agree": true
+    },
+    {
+      "threshold": 0.5,
+      "deepface_matches": [],
+      "mbf_matches": [],
+      "agree": true
+    },
+    {
+      "threshold": 0.6,
+      "deepface_matches": [
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "mbf_matches": [
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "agree": true
+    },
+    {
+      "threshold": 0.68,
+      "deepface_matches": [
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "mbf_matches": [
+        "IMG_20250301_114959813_HDR.jpg",
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "agree": false
+    },
+    {
+      "threshold": 0.8,
+      "deepface_matches": [
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "mbf_matches": [
+        "IMG_20250301_114959813_HDR.jpg",
+        "IMG_20250301_115003398_HDR.jpg",
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "agree": false
+    },
+    {
+      "threshold": 0.9,
+      "deepface_matches": [
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "mbf_matches": [
+        "IMG_20250301_101253092_HDR.jpg",
+        "IMG_20250301_114959813_HDR.jpg",
+        "IMG_20250301_115003398_HDR.jpg",
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "agree": false
+    },
+    {
+      "threshold": 1.0,
+      "deepface_matches": [
+        "IMG_20250301_101253092_HDR.jpg",
+        "IMG_20250301_114959813_HDR.jpg",
+        "IMG_20250301_115003398_HDR.jpg",
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "mbf_matches": [
+        "IMG_20250301_101253092_HDR.jpg",
+        "IMG_20250301_114959813_HDR.jpg",
+        "IMG_20250301_115003398_HDR.jpg",
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "agree": true
+    },
+    {
+      "threshold": 1.1,
+      "deepface_matches": [
+        "IMG_20250301_101253092_HDR.jpg",
+        "IMG_20250301_114959813_HDR.jpg",
+        "IMG_20250301_115003398_HDR.jpg",
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "mbf_matches": [
+        "IMG_20250301_101253092_HDR.jpg",
+        "IMG_20250301_114959813_HDR.jpg",
+        "IMG_20250301_115003398_HDR.jpg",
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "agree": true
+    },
+    {
+      "threshold": 1.2,
+      "deepface_matches": [
+        "IMG_20250301_101253092_HDR.jpg",
+        "IMG_20250301_114959813_HDR.jpg",
+        "IMG_20250301_115003398_HDR.jpg",
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "mbf_matches": [
+        "IMG_20250301_101253092_HDR.jpg",
+        "IMG_20250301_114959813_HDR.jpg",
+        "IMG_20250301_115003398_HDR.jpg",
+        "IMG_20250302_155231085_HDR.jpg"
+      ],
+      "agree": true
+    }
+  ],
+  "resolution_sweep": [
+    {
+      "photo": "P1",
+      "max_dim": 800,
+      "face_px2": 318,
+      "deepface": 0.9679743877033988,
+      "mbf": 0.8852132176283639
+    },
+    {
+      "photo": "P1",
+      "max_dim": 1200,
+      "face_px2": 728,
+      "deepface": 0.9069686453774299,
+      "mbf": 0.8336784466360092
+    },
+    {
+      "photo": "P1",
+      "max_dim": 1600,
+      "face_px2": 1275,
+      "deepface": 0.9300837031052572,
+      "mbf": 0.8892451690769376
+    },
+    {
+      "photo": "P1",
+      "max_dim": 2000,
+      "face_px2": 1977,
+      "deepface": 0.5716867052821666,
+      "mbf": 0.5486616538429958
+    },
+    {
+      "photo": "P1",
+      "max_dim": 4000,
+      "face_px2": 8250,
+      "deepface": 0.9377510544031338,
+      "mbf": 0.8793262825137472
+    },
+    {
+      "photo": "P2",
+      "max_dim": 800,
+      "face_px2": 835,
+      "deepface": 0.9797772677013256,
+      "mbf": 0.6738368724065751
+    },
+    {
+      "photo": "P2",
+      "max_dim": 1200,
+      "face_px2": 1889,
+      "deepface": 0.9632099440744337,
+      "mbf": 0.5762859788701675
+    },
+    {
+      "photo": "P2",
+      "max_dim": 1600,
+      "face_px2": 3340,
+      "deepface": 0.9603001410751554,
+      "mbf": 0.5691325753551821
+    },
+    {
+      "photo": "P2",
+      "max_dim": 2000,
+      "face_px2": 5152,
+      "deepface": 0.9509370321343803,
+      "mbf": 0.5721629006896558
+    },
+    {
+      "photo": "P2",
+      "max_dim": 4000,
+      "face_px2": 19504,
+      "deepface": 0.9428583477915199,
+      "mbf": 0.560618747263693
+    },
+    {
+      "photo": "P3",
+      "max_dim": 800,
+      "face_px2": 755,
+      "deepface": 0.9689170228226878,
+      "mbf": 0.738937009334498
+    },
+    {
+      "photo": "P3",
+      "max_dim": 1200,
+      "face_px2": 1689,
+      "deepface": 0.9343478256075559,
+      "mbf": 0.697567012239201
+    },
+    {
+      "photo": "P3",
+      "max_dim": 1600,
+      "face_px2": 3029,
+      "deepface": 0.8902444806566607,
+      "mbf": 0.7200695879100845
+    },
+    {
+      "photo": "P3",
+      "max_dim": 2000,
+      "face_px2": 4588,
+      "deepface": 0.877690104484816,
+      "mbf": 0.696474678376596
+    },
+    {
+      "photo": "P3",
+      "max_dim": 4000,
+      "face_px2": 18375,
+      "deepface": 0.8508951653730485,
+      "mbf": 0.6788129184715926
+    },
+    {
+      "photo": "P4",
+      "max_dim": 800,
+      "face_px2": 33088,
+      "deepface": 0.5915334111523516,
+      "mbf": 0.5056566719106194
+    },
+    {
+      "photo": "P4",
+      "max_dim": 1200,
+      "face_px2": 74342,
+      "deepface": 0.5408007408878068,
+      "mbf": 0.497705995960377
+    },
+    {
+      "photo": "P4",
+      "max_dim": 1600,
+      "face_px2": 132244,
+      "deepface": 0.567927249578045,
+      "mbf": 0.5032829119001716
+    },
+    {
+      "photo": "P4",
+      "max_dim": 2000,
+      "face_px2": 208812,
+      "deepface": 0.5192522148205609,
+      "mbf": 0.4852836243343053
+    },
+    {
+      "photo": "P4",
+      "max_dim": 4000,
+      "face_px2": 556497,
+      "deepface": 0.5925253029608155,
+      "mbf": 0.5472243990415515
+    }
+  ],
+  "labelled_pairs": {
+    "areas": {
+      "P1.f0": 8250,
+      "P1.f1": 7770,
+      "P2.f0": 19504,
+      "P3.f0": 18375,
+      "P4.f0": 556497
+    },
+    "separation": {
+      "deepface": {
+        "worst_same": 0.9428583477915199,
+        "best_diff": 0.1375407598828705,
+        "gap": -0.8053175879086494,
+        "separable": false,
+        "suggested_threshold": null
+      },
+      "mbf": {
+        "worst_same": 0.6788129184715926,
+        "best_diff": 0.7967890682673423,
+        "gap": 0.11797614979574966,
+        "separable": true,
+        "suggested_threshold": 0.7378009933694675
+      }
+    }
+  },
+  "deepface_config_variants": [
+    {
+      "color_order": "BGR (production)",
+      "normalization": "base",
+      "worst_same": 0.9428583477915199,
+      "best_diff": 0.1375407598828705,
+      "gap": -0.8053175879086494,
+      "separable": false
+    },
+    {
+      "color_order": "BGR (production)",
+      "normalization": "ArcFace",
+      "worst_same": 0.8757907084944605,
+      "best_diff": 0.25982163922533064,
+      "gap": -0.6159690692691299,
+      "separable": false
+    },
+    {
+      "color_order": "RGB",
+      "normalization": "base",
+      "worst_same": 0.806237584272145,
+      "best_diff": 0.49485978180504187,
+      "gap": -0.3113778024671031,
+      "separable": false
+    },
+    {
+      "color_order": "RGB",
+      "normalization": "ArcFace",
+      "worst_same": 0.7818265223658045,
+      "best_diff": 0.7397500819867303,
+      "gap": -0.04207644037907421,
+      "separable": false
+    }
+  ],
+  "caveats": [
+    "one identity, two different-person pairs - direction only",
+    "single trip: one outfit, one hairstyle, similar lighting",
+    "timings are this dev machine's CPU, not a phone",
+    "stages 1-6 mirror production's largest-face rule; stage 8 shows its cost"
+  ]
+}

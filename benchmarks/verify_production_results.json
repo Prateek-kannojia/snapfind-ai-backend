@@ -1,0 +1,195 @@
+{
+  "production_threshold": 0.68,
+  "mbf_threshold": 0.74,
+  "selfie_detector": "mtcnn",
+  "event_photo_max_dimension": 800,
+  "selfie_max_dimension": 1024,
+  "jobs": [
+    {
+      "job": "24c8ea7c-093a-4694-b33d-9a4585978a98",
+      "selfie": "1245f47ab06a4c16830157e5acec22db.jpg",
+      "selfie_sha256_12": "cb4e4f00c419",
+      "photo_count": 4,
+      "production": {
+        "threshold": 0.68,
+        "rows": [
+          {
+            "photo": "IMG_20250301_101253092_HDR.jpg",
+            "distance": 0.9642819950549687,
+            "matched": false
+          },
+          {
+            "photo": "IMG_20250301_114959813_HDR.jpg",
+            "distance": 0.9657725221786106,
+            "matched": false
+          },
+          {
+            "photo": "IMG_20250301_115003398_HDR.jpg",
+            "distance": 0.9609743441856258,
+            "matched": false
+          },
+          {
+            "photo": "IMG_20250302_155231085_HDR.jpg",
+            "distance": 0.6846201592377397,
+            "matched": false
+          }
+        ],
+        "matched": 0
+      },
+      "on_device": {
+        "threshold": 0.74,
+        "rows": [
+          {
+            "photo": "IMG_20250301_101253092_HDR.jpg",
+            "faces": 2,
+            "distance": 0.6953776700914421,
+            "matched": true
+          },
+          {
+            "photo": "IMG_20250301_114959813_HDR.jpg",
+            "faces": 1,
+            "distance": 0.6738368724065751,
+            "matched": true
+          },
+          {
+            "photo": "IMG_20250301_115003398_HDR.jpg",
+            "faces": 1,
+            "distance": 0.738937009334498,
+            "matched": true
+          },
+          {
+            "photo": "IMG_20250302_155231085_HDR.jpg",
+            "faces": 1,
+            "distance": 0.5056566719106194,
+            "matched": true
+          }
+        ],
+        "matched": 4
+      }
+    },
+    {
+      "job": "4092130d-f8ff-4218-ab6b-c2fef1d65bab",
+      "selfie": "d09cfff468554cebba7d9bd0bb86fdfc.jpg",
+      "selfie_sha256_12": "bcb2add115b6",
+      "photo_count": 4,
+      "production": {
+        "threshold": 0.68,
+        "rows": [
+          {
+            "photo": "IMG_20250301_101253092_HDR.jpg",
+            "distance": 1.0129355248984238,
+            "matched": false
+          },
+          {
+            "photo": "IMG_20250301_114959813_HDR.jpg",
+            "distance": 1.0212061005263404,
+            "matched": false
+          },
+          {
+            "photo": "IMG_20250301_115003398_HDR.jpg",
+            "distance": 1.0282056536515913,
+            "matched": false
+          },
+          {
+            "photo": "IMG_20250302_155231085_HDR.jpg",
+            "distance": 0.8619890837895011,
+            "matched": false
+          }
+        ],
+        "matched": 0
+      },
+      "on_device": {
+        "threshold": 0.74,
+        "rows": [
+          {
+            "photo": "IMG_20250301_101253092_HDR.jpg",
+            "faces": 2,
+            "distance": 0.955634245771044,
+            "matched": false
+          },
+          {
+            "photo": "IMG_20250301_114959813_HDR.jpg",
+            "faces": 1,
+            "distance": 1.18099299854924,
+            "matched": false
+          },
+          {
+            "photo": "IMG_20250301_115003398_HDR.jpg",
+            "faces": 1,
+            "distance": 1.0233501095811854,
+            "matched": false
+          },
+          {
+            "photo": "IMG_20250302_155231085_HDR.jpg",
+            "faces": 1,
+            "distance": 1.1082399234075269,
+            "matched": false
+          }
+        ],
+        "matched": 0
+      }
+    },
+    {
+      "job": "6fe1d707-565a-4f7f-a5b8-4faf75fca594",
+      "selfie": "5bd816c7e9de4bbba1bf029da8649440.jpg",
+      "selfie_sha256_12": "1b529a52e551",
+      "photo_count": 4,
+      "production": {
+        "threshold": 0.68,
+        "rows": [
+          {
+            "photo": "IMG_20250301_101253092_HDR.jpg",
+            "distance": 0.02780256800543579,
+            "matched": true
+          },
+          {
+            "photo": "IMG_20250301_114959813_HDR.jpg",
+            "distance": 0.00657913664042864,
+            "matched": true
+          },
+          {
+            "photo": "IMG_20250301_115003398_HDR.jpg",
+            "distance": 0.008342373204063835,
+            "matched": true
+          },
+          {
+            "photo": "IMG_20250302_155231085_HDR.jpg",
+            "distance": 0.5936741865975113,
+            "matched": true
+          }
+        ],
+        "matched": 4
+      },
+      "on_device": {
+        "threshold": 0.74,
+        "rows": [
+          {
+            "photo": "IMG_20250301_101253092_HDR.jpg",
+            "faces": 2,
+            "distance": 0.6403238491083045,
+            "matched": true
+          },
+          {
+            "photo": "IMG_20250301_114959813_HDR.jpg",
+            "faces": 1,
+            "distance": 0.08608593529707809,
+            "matched": true
+          },
+          {
+            "photo": "IMG_20250301_115003398_HDR.jpg",
+            "faces": 1,
+            "distance": 0.5591742253388319,
+            "matched": true
+          },
+          {
+            "photo": "IMG_20250302_155231085_HDR.jpg",
+            "faces": 1,
+            "distance": 0.48194985609318586,
+            "matched": true
+          }
+        ],
+        "matched": 4
+      }
+    }
+  ]
+}
