@@ -14,7 +14,7 @@ Synthetic backgrounds are a real limitation — see the caveats printed at the
 end. What this DOES give is exact ground truth across many identities and a
 controlled face-size sweep, neither of which the real photos provide.
 
-    python pipeline_audit/build_corpus.py <path-to-extracted-lfw>
+    python benchmarks/build_corpus.py <path-to-extracted-lfw>
 """
 from __future__ import annotations
 

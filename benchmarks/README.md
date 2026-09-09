@@ -242,10 +242,16 @@ The same rule governs the Android port: running the *identical* `.onnx` on serve
 
 ## Files
 
-- `detector_comparison.py` — detector comparison (needs this repo's venv)
-- `results.json` — detector raw output, regenerated on each run
-- `embedder_comparison.py` — embedder comparison, 9 stages
-- `embedder_results.json` — embedder raw output, regenerated on each run
-- `verify_production.py` — runs the real `face_matcher.py` functions over every job in `storage/uploads/`
-- `verify_production_results.json` — verification raw output, regenerated on each run
-- `sample_photos/` — gitignored corpus; event photos flat, selfie in `selfie/`
+**Settled decisions (evidence for something already shipped)**
+- `detector_comparison.py` / `results.json` — which detector for event photos
+- `verify_production.py` / `verify_production_results.json` — runs the real `face_matcher.py` functions over every job in `storage/uploads/`
+
+**Labelled-corpus suite (the ongoing regression tests)**
+- `build_corpus.py` — builds a labelled corpus from LFW: 10 identities, faces composited into phone-sized canvases at controlled sizes, with ground truth. Run it first.
+- `evaluate_corpus.py` — precision/recall/F1 against that ground truth, broken down by face size, plus a threshold sweep
+- `compare_embedders.py` — DeepFace ArcFace vs `w600k_mbf` head-to-head on identical crops; validates the ONNX port against insightface's own reference before trusting any number
+
+**Gitignored**
+- `sample_photos/` — real photos, kept out of a public repo
+- `corpus/` — generated; rebuild with `build_corpus.py`
+- `*_log.txt`, `embedder_headtohead.json`, `corpus_results.json` — run output
