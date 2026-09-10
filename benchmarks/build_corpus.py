@@ -26,7 +26,30 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-OUT = Path(__file__).resolve().parent / "corpus"
+from _common import BACKEND, CORPUS as OUT, p
+
+# Your three real jobs, folded in so there is ONE evaluation path instead of
+# two. Ground truth taken from the analysis in README.md section 3 - correct
+# it here if any of it is wrong, the numbers depend on it.
+#
+# They are referenced in place (storage/uploads), not copied.
+REAL_JOBS = {
+    "24c8ea7c-093a-4694-b33d-9a4585978a98": {
+        "target_in_all": True,   # README: "correct person, clearly usable - 0/4 is a real failure"
+        "ambiguous": False,
+    },
+    "6fe1d707-565a-4f7f-a5b8-4faf75fca594": {
+        "target_in_all": True,   # README: "4/4 is correct", verified against the source photo
+        "ambiguous": False,
+    },
+    "4092130d-f8ff-4218-ab6b-c2fef1d65bab": {
+        "target_in_all": True,
+        # Selfie is a 4-person group shot and production picks a face
+        # arbitrarily, so "the target" is not well defined. Reported but
+        # excluded from headline metrics.
+        "ambiguous": True,
+    },
+}
 JOBS = 10
 PHOTOS_PER_JOB = (12, 18)      # inclusive range
 CANVAS = (3000, 2000)          # w, h — phone-photo shaped
@@ -34,10 +57,6 @@ FACE_PX = [70, 110, 160, 240, 340]   # face width in the canvas; sweeps the size
 TILE_FACE_FRACTION = 0.44      # an LFW face spans ~110px of the 250px tile
 
 random.seed(20260909)
-
-
-def p(m=""):
-    print(m, flush=True)
 
 
 def load_identities(lfw_root: Path, min_photos: int) -> dict[str, list[Path]]:
@@ -154,6 +173,9 @@ def main() -> None:
 
         manifest.append({
             "job_id": job_id,
+            "source": "synthetic",
+            "ambiguous": False,
+            "root": str(job_dir),
             "target_identity": target,
             "selfie": "selfie/selfie.jpg",
             "event_photos": photos,
@@ -162,6 +184,33 @@ def main() -> None:
         })
         p(f"  {job_id}: {len(photos)} photos "
           f"({manifest[-1]['positives']} pos / {manifest[-1]['negatives']} neg)")
+
+    # --- real jobs, referenced in place -----------------------------------
+    uploads = BACKEND / "storage" / "uploads"
+    for job_id, meta in REAL_JOBS.items():
+        job_dir = uploads / job_id
+        selfie = next((job_dir / "selfie").glob("*.jpg"), None)
+        photos = sorted((job_dir / "event_photos").glob("*.jpg"))
+        if selfie is None or not photos:
+            p(f"  (real job {job_id[:8]}... not found on disk, skipped)")
+            continue
+        manifest.append({
+            "job_id": f"real_{job_id[:8]}",
+            "source": "real",
+            "ambiguous": meta["ambiguous"],
+            "root": str(job_dir),
+            "target_identity": "prateek",
+            "selfie": str(selfie.relative_to(job_dir)).replace("\\", "/"),
+            "event_photos": [
+                {"file": ph.name, "contains_target": meta["target_in_all"],
+                 "face_px": None, "people": ["prateek"]}
+                for ph in photos
+            ],
+            "positives": len(photos) if meta["target_in_all"] else 0,
+            "negatives": 0 if meta["target_in_all"] else len(photos),
+        })
+        flag = "  (ambiguous selfie - excluded from headline metrics)" if meta["ambiguous"] else ""
+        p(f"  real_{job_id[:8]}: {len(photos)} photos, all positive{flag}")
 
     (OUT / "ground_truth.json").write_text(json.dumps(manifest, indent=2))
     total = sum(len(j["event_photos"]) for j in manifest)

@@ -2,13 +2,13 @@ venv/
 __pycache__/
 *.pyc
 app.db
+# Downloaded model weights (~350MB). Never committed; they re-download on
+# first use and live in Docker volumes for the containers.
 storage/
+models/
 .env
-# Real photos of real people — kept out of a public repo on purpose.
-benchmarks/sample_photos/
-
-# Generated test corpus (composited LFW faces) + run logs
-benchmarks/corpus/
+# Test photos. Holds real photos of real people AND the generated LFW corpus,
+# so it stays out of a public repo entirely. Rebuild with build_corpus.py.
+# RESULTS.md is committed on purpose — it's the readable output.
+benchmarks/sample_test_data/
 benchmarks/*_log.txt
-benchmarks/embedder_headtohead.json
-benchmarks/corpus_results.json

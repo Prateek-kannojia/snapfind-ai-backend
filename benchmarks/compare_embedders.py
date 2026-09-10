@@ -12,36 +12,27 @@ Needs a corpus with ground truth; build one with build_corpus.py.
 from __future__ import annotations
 
 import json
-import math
 import sys
 import time
 from collections import defaultdict
 from pathlib import Path
 
-BACKEND = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BACKEND))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 import onnxruntime as ort  # noqa: E402
 
+from _common import (  # noqa: E402
+    CORPUS, aligned_faces, cosine, md_table, p, score, write_results_section,
+)
+
 from core.settings import settings  # noqa: E402
 from services import face_matcher as fm  # noqa: E402
 
-CORPUS = Path(__file__).resolve().parent / "corpus"
-RESULTS = Path(__file__).resolve().parent / "embedder_headtohead.json"
 MBF_PATH = settings.insightface_home / "models" / "buffalo_sc" / "w600k_mbf.onnx"
 MBF_INPUT_MEAN, MBF_INPUT_STD, MBF_INPUT_SIZE = 127.5, 127.5, (112, 112)
 THRESHOLDS = [round(x * 0.05, 2) for x in range(6, 21)]  # 0.30 .. 1.00
-
-
-def p(m=""):
-    print(m, flush=True)
-
-
-def cosine(a, b):
-    dot = sum(x * y for x, y in zip(a, b))
-    return 1 - dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b)))
 
 
 mbf_session = ort.InferenceSession(str(MBF_PATH), providers=["CPUExecutionProvider"])
@@ -74,49 +65,18 @@ def validate_mbf_port(sample: np.ndarray) -> float:
     return cosine(embed_mbf(sample), ref.get_feat(sample).flatten().tolist())
 
 
-def aligned_faces(photo_path: Path) -> list[np.ndarray]:
-    """Production's crops: detect on the downscaled image, crop from the original."""
-    from insightface.utils import face_align
-
-    original = cv2.imread(str(photo_path))
-    if original is None:
-        return []
-    detect_image = fm._downscale(original, settings.event_photo_max_dimension)
-    faces = fm._get_insightface_app().get(detect_image)
-    if not faces:
-        return []
-    scale = original.shape[1] / detect_image.shape[1]
-    return [
-        face_align.norm_crop(
-            original, f.kps * scale if scale != 1 else f.kps, image_size=112, mode="arcface"
-        )
-        for f in faces
-    ]
-
-
-def score(records, threshold):
-    tp = sum(1 for r in records if r["truth"] and r["d"] is not None and r["d"] <= threshold)
-    fp = sum(1 for r in records if not r["truth"] and r["d"] is not None and r["d"] <= threshold)
-    fn = sum(1 for r in records if r["truth"] and (r["d"] is None or r["d"] > threshold))
-    tn = sum(1 for r in records if not r["truth"] and (r["d"] is None or r["d"] > threshold))
-    prec = tp / (tp + fp) if tp + fp else 0.0
-    rec = tp / (tp + fn) if tp + fn else 0.0
-    f1 = 2 * prec * rec / (prec + rec) if prec + rec else 0.0
-    return {"tp": tp, "fp": fp, "fn": fn, "tn": tn, "precision": prec, "recall": rec,
-            "f1": f1, "accuracy": (tp + tn) / max(1, len(records))}
-
-
 def main() -> None:
     if not (CORPUS / "ground_truth.json").exists():
         raise SystemExit(f"No corpus at {CORPUS} — run build_corpus.py first")
-    truth = json.loads((CORPUS / "ground_truth.json").read_text())
+    truth = [j for j in json.loads((CORPUS / "ground_truth.json").read_text())
+             if j.get("source") == "synthetic"]  # needs the face-size axis
 
     # Crop once, embed with both — guarantees identical input to each model.
     p("cropping faces (shared by both embedders)...")
     per_photo, selfie_crops = [], {}
     t0 = time.time()
     for job in truth:
-        job_dir = CORPUS / job["job_id"]
+        job_dir = Path(job["root"])
         sc = aligned_faces(job_dir / job["selfie"])
         if not sc:
             p(f"  {job['job_id']}: no face in selfie, skipped")
@@ -180,8 +140,35 @@ def main() -> None:
                          "worst_same": max(same), "best_diff": min(diff), "gap": gap,
                          "by_face_px": {str(px): score(by[px], best) for px in sorted(by)}}
 
-    RESULTS.write_text(json.dumps(results, indent=2))
-    p(f"wrote {RESULTS}")
+    models = [(n, r) for n, r in results.items() if n != "_mbf_port_validation"]
+    body = [
+        "Same photos, same detector, same crops — only the embedder differs. "
+        "Each model gets its own threshold sweep, because the two produce "
+        "different vector spaces and a shared threshold would mean nothing.\n",
+        f"ONNX port validated against insightface's own reference: "
+        f"`{port_error:.8f}`. If that is not ~0 the preprocessing is wrong and "
+        f"every number below is meaningless.\n",
+        md_table(["model", "best threshold", "precision", "recall", "F1",
+                  "accuracy", "FP", "embed time"],
+                 [[n, f"{r['best_threshold']:.2f}", f"{r['precision']:.3f}",
+                   f"{r['recall']:.3f}", f"**{r['f1']:.3f}**",
+                   f"{r['accuracy']:.3f}", r["fp"], f"{r['elapsed_s']:.0f}s"]
+                  for n, r in models]),
+        "\n**Separability** — a threshold can only work if the worst same-person "
+        "pair scores closer than the best different-person pair:\n",
+        md_table(["model", "worst SAME", "best DIFFERENT", "gap"],
+                 [[n, f"{r['worst_same']:.4f}", f"{r['best_diff']:.4f}",
+                   f"{r['gap']:+.4f}"] for n, r in models]),
+        "\nA negative gap means the two ranges overlap, so no threshold is "
+        "perfect for that model.\n",
+        f"\n**Accuracy by face size** (each model at its own best threshold) — "
+        f"this is what decides whether swapping the model fixes small faces:\n",
+        md_table(["face px"] + [n for n, _ in models],
+                 [[px] + [f"{r['by_face_px'][px]['accuracy']:.3f}"
+                          if px in r["by_face_px"] else "-" for _, r in models]
+                  for px in sorted(models[0][1]["by_face_px"], key=int)]),
+    ]
+    write_results_section("embedders", "Embedder comparison", "\n".join(body))
 
 
 if __name__ == "__main__":

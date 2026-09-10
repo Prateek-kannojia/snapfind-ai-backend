@@ -27,13 +27,15 @@ Only the **Detect** step changed across the three rounds below — ArcFace has b
 
 ## Results
 
-Measured against 4 real sample photos. Full output: [`results.json`](results.json).
+The table below is the original 4-photo run that drove the decision. Current
+numbers, on a 30-photo corpus sample, are in [`RESULTS.md`](RESULTS.md) — the
+ranking is unchanged.
 
-To reproduce, drop a few photos into `benchmarks/sample_photos/` (gitignored — the originals aren't committed because they're photos of real people and this repo is public), then from the `Face_recognition/` repo root:
+To reproduce, build the corpus first, then from the `Face_recognition/` repo root:
 
 ```powershell
 venv\Scripts\python.exe benchmarks\detector_comparison.py
-# or point it anywhere:
+# or point it at your own photos:
 venv\Scripts\python.exe benchmarks\detector_comparison.py C:\some\folder
 ```
 
@@ -150,11 +152,13 @@ Raising it improves `w600k_mbf` materially (P2: 0.674 → 0.561) and DeepFace ba
 
 ## 3. Production verification (all sample jobs)
 
-`verify_production.py` imports `services/face_matcher.py` and calls the real `_selfie_embedding()`, `_event_photo_embedding()` and `_cosine_distance()` — no reimplementation — across every job under `storage/uploads/`.
+This is the run that found the bug, kept as a record of the *broken* pipeline —
+the numbers below are from before the two-stage crop fix.
 
-```powershell
-venv\Scripts\python.exe benchmarks\verify_production.py
-```
+It used a script that ran the real `face_matcher.py` functions over every job
+under `storage/uploads/`. Those jobs are now folded into the corpus instead, so
+`evaluate_corpus.py` covers the same ground alongside the labelled data, and
+that script is gone. Current numbers: [`RESULTS.md`](RESULTS.md).
 
 | Job | Production (0.68) | On-device stack (0.74) |
 |---|---|---|
@@ -242,16 +246,27 @@ The same rule governs the Android port: running the *identical* `.onnx` on serve
 
 ## Files
 
-**Settled decisions (evidence for something already shipped)**
-- `detector_comparison.py` / `results.json` — which detector for event photos
-- `verify_production.py` / `verify_production_results.json` — runs the real `face_matcher.py` functions over every job in `storage/uploads/`
+Four scripts. Each answers one question and writes its own section of
+[`RESULTS.md`](RESULTS.md), so they can be run separately and in any order.
 
-**Labelled-corpus suite (the ongoing regression tests)**
-- `build_corpus.py` — builds a labelled corpus from LFW: 10 identities, faces composited into phone-sized canvases at controlled sizes, with ground truth. Run it first.
-- `evaluate_corpus.py` — precision/recall/F1 against that ground truth, broken down by face size, plus a threshold sweep
-- `compare_embedders.py` — DeepFace ArcFace vs `w600k_mbf` head-to-head on identical crops; validates the ONNX port against insightface's own reference before trusting any number
+| script | question it answers |
+|---|---|
+| `build_corpus.py` | **Run first.** Builds the labelled corpus: 10 LFW identities composited into phone-sized canvases at controlled face sizes, plus the real jobs already in `storage/uploads/`, with ground truth for both. |
+| `evaluate_corpus.py` | How accurate is the pipeline? Precision/recall/F1 against that ground truth, by face size, across a threshold sweep. |
+| `compare_embedders.py` | DeepFace ArcFace vs `w600k_mbf` on identical crops. Validates the ONNX port against insightface's own reference before trusting a single number. |
+| `detector_comparison.py` | Which detector, and what did the two rejected ones actually cost? opencv → retinaface → insightface, all on identical input. |
+
+`_common.py` holds what they share — scoring, cosine distance, production's
+crop path, and the RESULTS.md section writer.
+
+Real and synthetic are scored separately, never averaged. The real jobs are
+all-positive, so they measure recall and cannot measure precision; the
+synthetic ones carry the face-size axis that real photos don't.
 
 **Gitignored**
 - `sample_photos/` — real photos, kept out of a public repo
 - `corpus/` — generated; rebuild with `build_corpus.py`
-- `*_log.txt`, `embedder_headtohead.json`, `corpus_results.json` — run output
+- `*_log.txt` — run output
+
+`RESULTS.md` is committed: it's the readable output, and regenerated in place
+rather than appended to.
