@@ -7,8 +7,10 @@ from pathlib import Path
 class Settings:
     def __init__(self) -> None:
         base_dir = Path(__file__).resolve().parent.parent
-        default_deepface_home = base_dir / "storage" / "deepface"
-        default_insightface_home = base_dir / "storage" / "insightface"
+        # Downloaded model weights only — no user photo is ever written here.
+        # Photos live in object storage; see the s3_* settings below.
+        default_deepface_home = base_dir / "models" / "deepface"
+        default_insightface_home = base_dir / "models" / "insightface"
 
         self.app_name = os.getenv("APP_NAME", "Event Photo Finder API")
         self.app_version = os.getenv("APP_VERSION", "0.1.0")

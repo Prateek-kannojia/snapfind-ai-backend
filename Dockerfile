@@ -20,8 +20,8 @@ COPY . .
 # Model weight caches are Docker volumes (see docker-compose.yml) so a
 # container rebuild doesn't re-download ~350MB of ArcFace/mtcnn/insightface
 # weights every time. Photos live in MinIO, not on a container disk.
-ENV DEEPFACE_HOME=/app/storage/deepface \
-    INSIGHTFACE_HOME=/app/storage/insightface
+ENV DEEPFACE_HOME=/app/models/deepface \
+    INSIGHTFACE_HOME=/app/models/insightface
 
 EXPOSE 8000
 

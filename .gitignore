@@ -4,7 +4,6 @@ __pycache__/
 app.db
 # Downloaded model weights (~350MB). Never committed; they re-download on
 # first use and live in Docker volumes for the containers.
-storage/
 models/
 .env
 # Test photos. Holds real photos of real people AND the generated LFW corpus,

@@ -305,12 +305,12 @@ Face_recognition/
 │   ├── queue_service.py       # Redis/RQ enqueue helper
 │   ├── face_matcher.py        # ML pipeline: detection, embedding, distance, parallel matching
 │   └── storage_service.py     # S3/MinIO: put/get, presigning, multipart, ZIP extraction
-└── storage/
+└── models/
     ├── deepface/              # DeepFace model weights cache (mtcnn selfie detector, ArcFace embedder)
     └── insightface/           # insightface model weights cache (event-photo detector + w600k_mbf)
 ```
 
-`storage/` holds **only downloaded model weights** — they are Docker volumes so
+`models/` holds **only downloaded model weights** — they are Docker volumes so
 a rebuild doesn't re-fetch ~350MB. No user photo is ever written there.
 
 **Why this structure?** Each layer has one responsibility. `routes.py` only handles HTTP. `job_service.py` only knows about jobs and their lifecycle. `face_matcher.py` only knows about faces. `storage_service.py` only knows about files. This makes each piece testable and replaceable independently.
@@ -486,7 +486,7 @@ On Windows, `worker.py` defaults to RQ's `SimpleWorker`, which avoids Unix-style
 
 ### First run note
 
-On the very first processing request, DeepFace will download the ArcFace model weights (~100MB) and cache them in `storage/deepface/`. Subsequent runs load from cache and are much faster.
+On the very first processing request, DeepFace will download the ArcFace model weights (~100MB) and cache them in `models/deepface/`. Subsequent runs load from cache and are much faster.
 
 ---
 
@@ -503,8 +503,8 @@ On the very first processing request, DeepFace will download the ArcFace model w
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | `snapfind` / `snapfind123` | Object storage credentials |
 | `S3_BUCKET` | `snapfind` | Bucket holding selfies, archives and event photos |
 | `PRESIGNED_URL_TTL_SECONDS` | `3600` | How long a presigned URL stays valid. Short on purpose — clients re-fetch `/matches` for fresh links rather than holding long-lived ones |
-| `DEEPFACE_HOME` | `storage/deepface` | DeepFace model cache directory |
-| `INSIGHTFACE_HOME` | `storage/insightface` | insightface model cache directory (the event-photo detector's ONNX weights) |
+| `DEEPFACE_HOME` | `models/deepface` | DeepFace model cache directory |
+| `INSIGHTFACE_HOME` | `models/insightface` | insightface model cache directory (the event-photo detector's ONNX weights) |
 | `MAX_EVENT_PHOTOS` | `500` | Maximum photos allowed per ZIP |
 | `SELFIE_DETECTOR` | `mtcnn` | Face detector for selfie (accurate) |
 | `FACE_MATCH_WORKERS` | `4` | Parallel threads for event photo processing (within one worker process) |
