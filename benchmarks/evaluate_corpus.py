@@ -1,9 +1,11 @@
 """How accurate is the pipeline? Measured through the real API.
 
-Every corpus job is uploaded the way a phone would: init, presigned PUTs,
-multipart zip, complete, process. Nothing reads photos off disk behind the
-API's back, so this exercises upload, extraction, detection, embedding and
-matching together.
+Re-processes the jobs already seeded by seed_jobs.py and scores what comes
+back. Nothing is uploaded here and nothing is read off disk behind the API's
+back — the numbers come from /process and /matches on real jobs whose photos
+live in object storage.
+
+Run seed_jobs.py first (once, or after a database wipe).
 
 There is no ground-truth file. The answers are already in the filenames
 build_corpus.py writes, which the pipeline preserves as original_filename:
@@ -18,15 +20,13 @@ Each job is processed once at a threshold just under 1.0, so every detected
 face comes back with its distance. The sweep is then arithmetic on those
 numbers instead of nine more trips through the models.
 
-    venv\\Scripts\\python.exe benchmarks\\build_corpus.py <lfw-path>   # first
+    venv\\Scripts\\python.exe benchmarks\\seed_jobs.py        # once
     venv\\Scripts\\python.exe benchmarks\\evaluate_corpus.py
 """
 from __future__ import annotations
 
-import io
 import sys
 import time
-import zipfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -35,81 +35,80 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import requests  # noqa: E402
 
 from _common import (  # noqa: E402
-    SAMPLE_DATA, discover_jobs, label_from, md_table, p, score, write_results_section,
+    discover_jobs, label_from, md_table, p, score, seeded_job_ids,
+    write_results_section,
 )
 
 API = "http://localhost:8000"
-PART_SIZE = 8 * 1024 * 1024        # S3 multipart floor is 5MB per non-final part
 COLLECT_THRESHOLD = 0.99           # route requires < 1.0; returns every detected face
 THRESHOLDS = [0.50, 0.55, 0.60, 0.65, 0.68, 0.70, 0.75, 0.80, 0.85]
 DEFAULT_THRESHOLD = 0.68
-POLL_TIMEOUT = 900
+POLL_TIMEOUT = 1800                # per job, wall clock
+POLL_INTERVAL = 3
+HTTP_TIMEOUT = 120                 # generous: the API competes with the worker for CPU
 
 
-def zip_bytes(photos: list[Path]) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
-        for ph in photos:
-            zf.write(ph, arcname=ph.name)
-    return buf.getvalue()
+def _request(method: str, url: str, **kwargs) -> dict | None:
+    """One HTTP call, returning None instead of raising on a transport error.
 
-
-def put(url: str, body: bytes) -> None:
-    """No Content-Type header — it is part of the signed string, and sending
-    one the server did not sign gets a 403, or on a large body, a hang."""
-    r = requests.put(url, data=body, timeout=300)
-    if r.status_code != 200:
-        raise RuntimeError(f"PUT failed {r.status_code}: {r.text[:300]}")
-
-
-def upload(job: dict) -> str:
-    """Init, PUT selfie and zip parts, complete. Returns the job UUID."""
-    payload = zip_bytes(job["photos"])
-    parts = [payload[i:i + PART_SIZE] for i in range(0, len(payload), PART_SIZE)] or [b""]
-
-    r = requests.post(f"{API}/jobs/upload/init", json={
-        "selfie_filename": f"{job['name']}.jpg",   # carries job identity through
-        "zip_filename": f"{job['name']}.zip",
-        "part_count": len(parts),
-    }, timeout=60)
-    r.raise_for_status()
-    init = r.json()
-
-    put(init["selfie_upload_url"], job["selfie"].read_bytes())
-    for entry in sorted(init["zip_upload_urls"], key=lambda e: e["part_number"]):
-        put(entry["url"], parts[entry["part_number"] - 1])
-
-    r = requests.post(f"{API}/jobs/{init['job_id']}/upload/complete", timeout=120)
-    r.raise_for_status()
-    return init["job_id"]
+    Callers are polling loops with their own deadline, so a timed-out or
+    refused request means "ask again", not "give up on 13 jobs of work".
+    """
+    try:
+        r = requests.request(method, url, timeout=HTTP_TIMEOUT, **kwargs)
+        r.raise_for_status()
+        return r.json()
+    except requests.RequestException as exc:
+        p(f"    (transient: {type(exc).__name__}; retrying)")
+        return None
 
 
 def process_and_wait(job_id: str) -> str:
-    r = requests.post(f"{API}/jobs/{job_id}/process",
-                      params={"threshold": COLLECT_THRESHOLD}, timeout=60)
-    r.raise_for_status()
+    """Queue the job, then poll until it settles.
+
+    The worker saturates the CPU while embedding, which starves the API
+    container enough that a status request can occasionally take longer than
+    its timeout. That is not a failure — the job is still running — so a slow
+    or dropped poll is retried rather than aborting the whole run. Only the
+    overall deadline gives up.
+    """
+    # A failed enqueue means the job never starts, so polling would just burn
+    # the deadline. Retry it, then give up loudly rather than quietly.
+    for _ in range(3):
+        if _request("post", f"{API}/jobs/{job_id}/process",
+                    params={"threshold": COLLECT_THRESHOLD}) is not None:
+            break
+        time.sleep(POLL_INTERVAL)
+    else:
+        return "could not enqueue"
 
     deadline = time.time() + POLL_TIMEOUT
     while time.time() < deadline:
-        status = requests.get(f"{API}/jobs/{job_id}", timeout=30).json()["status"]
-        if status in ("completed", "failed"):
-            return status
-        time.sleep(2)
+        payload = _request("get", f"{API}/jobs/{job_id}")
+        if payload is not None and payload["status"] in ("completed", "failed"):
+            return payload["status"]
+        time.sleep(POLL_INTERVAL)
     return "timeout"
 
 
-def distances(job_id: str) -> dict[str, float]:
-    data = requests.get(f"{API}/jobs/{job_id}/matches", timeout=60).json()
-    return {m["filename"]: m["match_distance"] for m in data["matches"]}
+def distances(job_id: str) -> dict[str, float] | None:
+    for _ in range(3):
+        data = _request("get", f"{API}/jobs/{job_id}/matches")
+        if data is not None:
+            return {m["filename"]: m["match_distance"] for m in data["matches"]}
+        time.sleep(POLL_INTERVAL)
+    return None
 
 
-def run_job(job: dict) -> list[dict]:
-    job_id = upload(job)
+def run_job(job: dict, job_id: str) -> list[dict]:
     status = process_and_wait(job_id)
     if status != "completed":
         p(f"  {job['name']}: {status.upper()} (job {job_id[:8]})")
         return []
     found = distances(job_id)
+    if found is None:
+        p(f"  {job['name']}: could not read matches (job {job_id[:8]})")
+        return []
 
     records = []
     for ph in job["photos"]:
@@ -126,8 +125,6 @@ def run_job(job: dict) -> list[dict]:
 
 def main() -> None:
     jobs = discover_jobs()
-    if not jobs:
-        raise SystemExit(f"No test data at {SAMPLE_DATA} — run build_corpus.py first")
 
     # Optional name filters, for a quick partial run. A partial run does not
     # touch RESULTS.md — a subset written into that section would read as the
@@ -142,11 +139,21 @@ def main() -> None:
     except Exception as exc:
         raise SystemExit(f"API not reachable at {API} ({exc}) — is docker compose up?")
 
-    p(f"pushing {len(jobs)} jobs through {API}\n")
+    seeded = seeded_job_ids()
+    unseeded = [j["name"] for j in jobs if j["name"] not in seeded]
+    if unseeded:
+        raise SystemExit(
+            f"{len(unseeded)} job(s) not in the database: {', '.join(unseeded[:4])}"
+            f"{' ...' if len(unseeded) > 4 else ''}\n"
+            "Run benchmarks/seed_jobs.py first — this script measures jobs that "
+            "already exist, it does not upload."
+        )
+
+    p(f"re-processing {len(jobs)} seeded jobs through {API}\n")
     started = time.time()
     records: list[dict] = []
     for job in jobs:
-        records += run_job(job)
+        records += run_job(job, seeded[job["name"]])
     elapsed = time.time() - started
 
     synthetic = [r for r in records if r["source"] == "synthetic"]
@@ -154,10 +161,9 @@ def main() -> None:
     real_amb = [r for r in records if r["source"] == "real" and r["ambiguous"]]
 
     body: list[str] = [
-        "Every job was uploaded and processed through the running API — "
-        "presigned PUTs, multipart zip, worker extraction, the real matcher. "
-        "Labels come from the filenames, so there is no ground-truth file to "
-        "drift out of sync.\n"
+        "Every job was processed through the running API — real jobs, photos "
+        "fetched from object storage, the real matcher. Labels come from the "
+        "filenames, so there is no ground-truth file to drift out of sync.\n"
     ]
 
     s = score(synthetic, DEFAULT_THRESHOLD)

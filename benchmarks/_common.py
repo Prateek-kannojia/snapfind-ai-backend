@@ -81,6 +81,30 @@ def discover_jobs() -> list[dict]:
     return jobs
 
 
+def seeded_job_ids() -> dict[str, str]:
+    """corpus job name -> the job id the API assigned when it was seeded.
+
+    Read from Postgres rather than a local file: the id is minted by the
+    server and exists nowhere else, and the database is already the record.
+    A file would just be a copy that goes stale the next time you re-seed.
+    The link is `selfie_filename`, which seed_jobs.py sets to the job name.
+    """
+    from sqlalchemy import create_engine, text
+
+    from core.settings import settings
+
+    engine = create_engine(settings.database_url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT selfie_filename, id FROM upload_jobs ORDER BY created_at"
+            )).all()
+    finally:
+        engine.dispose()
+    # Later seeds win, so re-seeding without wiping still resolves correctly.
+    return {Path(name).stem: job_id for name, job_id in rows}
+
+
 def records_for(job: dict, distance_of) -> list[dict]:
     """Score one job's photos. `distance_of(selfie, photo_path)` returns the
     cosine distance, or None when no face was found."""
