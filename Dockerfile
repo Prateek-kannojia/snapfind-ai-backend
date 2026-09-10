@@ -17,12 +17,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Model weight caches and uploaded files are Docker volumes (see
-# docker-compose.yml) so a container rebuild doesn't re-download ~350MB of
-# ArcFace/mtcnn/insightface weights every time.
+# Model weight caches are Docker volumes (see docker-compose.yml) so a
+# container rebuild doesn't re-download ~350MB of ArcFace/mtcnn/insightface
+# weights every time. Photos live in MinIO, not on a container disk.
 ENV DEEPFACE_HOME=/app/storage/deepface \
-    INSIGHTFACE_HOME=/app/storage/insightface \
-    UPLOAD_ROOT=/app/storage/uploads
+    INSIGHTFACE_HOME=/app/storage/insightface
 
 EXPOSE 8000
 

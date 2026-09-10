@@ -18,34 +18,51 @@ Jobs move through `pending → queued → processing → completed/failed`. Matc
 
 ## Tech stack
 
-FastAPI · SQLAlchemy · PostgreSQL + pgvector (SQLite for local dev) · Redis + RQ · DeepFace (ArcFace) · insightface (SCRFD) · Docker
+FastAPI · SQLAlchemy · PostgreSQL + pgvector · MinIO / S3 · Redis + RQ · DeepFace (ArcFace) · insightface (SCRFD) · Docker
 
 ## API
 
+Photo bytes never pass through this API. Clients upload straight to object
+storage using presigned URLs, and the zip goes up in parts so an interrupted
+upload can resume instead of restarting.
+
 | Endpoint | What it does |
 |---|---|
-| `POST /jobs/upload` | Upload selfie + event photos zip |
-| `GET /jobs/{id}` | Poll job status |
+| `POST /jobs/upload/init` | Create a job, get presigned URLs for the selfie and each zip part |
+| `POST /jobs/{id}/upload/urls` | Fresh URLs for specific parts — to resume, or when the originals expired |
+| `POST /jobs/{id}/upload/complete` | Finish the multipart upload |
+| `GET /jobs/{id}` | Poll job status; also lists which parts have landed |
 | `POST /jobs/{id}/process` | Queue face matching |
-| `GET /jobs/{id}/matches` | List matched photos |
-| `GET /jobs/{id}/matches/{match_id}/download` | Download a matched photo |
+| `GET /jobs/{id}/matches` | List matched photos with presigned download URLs |
+| `GET /jobs/{id}/matches/{match_id}/download` | Redirects (307) to a presigned URL |
 
 ## Run it
 
 ```powershell
 docker compose up -d --build
 ```
-Starts everything — API, worker, Redis, Postgres. API at `http://localhost:8000/docs`. Manual (no-Docker) setup: see [DEEP_DIVE.md](DEEP_DIVE.md#how-to-run-locally).
+Starts everything — API, worker, Redis, Postgres, MinIO. API at
+`http://localhost:8000/docs`, object browser at `http://localhost:9001`.
+Manual (no-Docker) setup: see [DEEP_DIVE.md](DEEP_DIVE.md#how-to-run-locally).
 
 ## Measured performance
 
-Real numbers, not estimates — full comparison and methodology in [`benchmarks/`](benchmarks/).
+Real numbers, not estimates. Generated output in
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md), methodology and caveats in
+[`benchmarks/`](benchmarks/).
 
-| Detector | Time/photo | Accuracy |
+Detector choice, 30 photos, identical input to all three:
+
+| Detector | Time/photo | Found a face |
 |---|---|---|
-| opencv (original default) | 0.26s | 0/4 faces — silently broken |
-| retinaface | ~11s | 4/4 — correct, too slow |
-| **insightface/SCRFD (current)** | **~0.4s** | **4/4 — correct and fast** |
+| opencv (original default) | 0.23s | 53% — silently broken |
+| retinaface | 14.4s | 97% — correct, too slow |
+| **insightface/SCRFD (current)** | **0.28s** | **100%** |
+
+Matching accuracy against a labelled corpus (153 composited LFW photos, 10
+identities, known answers) at the default 0.68 threshold: **precision 0.955,
+recall 0.829, F1 0.887**. Accuracy tracks face size closely — 0.968 at 160px,
+0.800 at 70px — which is the honest limit of the current pipeline.
 
 ## Project structure
 
@@ -53,7 +70,7 @@ Real numbers, not estimates — full comparison and methodology in [`benchmarks/
 Face_recognition/
 ├── main.py, worker.py            # FastAPI app, RQ worker
 ├── api/, core/, db/, services/   # routes, config/errors, ORM, business logic
-├── benchmarks/                   # detector comparison, reproducible
+├── benchmarks/                   # labelled corpus + 4 reproducible measurements
 ├── Dockerfile, docker-compose.yml
 └── DEEP_DIVE.md                  # full pipeline explanation + dated work log
 ```

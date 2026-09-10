@@ -118,59 +118,83 @@ This is why the job table stores `queued_at`, `processing_started_at`, `rq_job_i
 
 ## Database schema
 
-Three tables, all in SQLite via SQLAlchemy:
+Three tables in PostgreSQL via SQLAlchemy. The database stores *records and
+object keys only* — no image bytes, and no presigned URLs (those are minted
+on demand and expire).
 
 ```
 upload_jobs
-  id               TEXT PRIMARY KEY  (UUID)
+  id               VARCHAR(36) PRIMARY KEY  (UUID)
   status           ENUM              (pending / queued / processing / completed / failed)
-  selfie_filename  TEXT
-  selfie_storage_path TEXT
+  selfie_filename  VARCHAR(255)      ← the name the client sent
+  selfie_object_key VARCHAR(500)     ← where it lives in object storage
+  zip_object_key   VARCHAR(500) NULL ← the uploaded archive
+  zip_upload_id    VARCHAR(255) NULL ← S3 multipart id; NULL once the upload completes
   event_photo_count INTEGER
-  created_at       DATETIME
-  queued_at        DATETIME NULL
-  processing_started_at DATETIME NULL
-  rq_job_id        TEXT NULL
+  created_at       TIMESTAMP
+  queued_at        TIMESTAMP NULL
+  processing_started_at TIMESTAMP NULL
+  rq_job_id        VARCHAR(255) NULL
   last_error       TEXT NULL
 
 event_photos
   id               INTEGER PRIMARY KEY
-  job_id           TEXT → upload_jobs.id
-  original_filename TEXT
-  storage_path     TEXT
-  embedding        TEXT   ← JSON string of 512 floats, NULL until first processing run
-  created_at       DATETIME
+  job_id           VARCHAR(36) → upload_jobs.id
+  original_filename VARCHAR(255)
+  object_key       VARCHAR(500)
+  embedding        vector(512)  ← pgvector, NULL until first processing run
+  created_at       TIMESTAMP
 
 matched_photos
   id               INTEGER PRIMARY KEY
-  job_id           TEXT → upload_jobs.id
+  job_id           VARCHAR(36) → upload_jobs.id
   event_photo_id   INTEGER → event_photos.id
   match_distance   FLOAT
-  created_at       DATETIME
+  created_at       TIMESTAMP
 ```
 
 The `matched_photos` table is fully replaced on every processing run. This means you can re-run processing with a different threshold and always get a fresh, correct result set.
 
 ---
 
-## File storage layout
+## Object storage layout
 
-Each job gets its own directory under `storage/uploads/`:
+There is no upload directory. Photos live in an S3-compatible object store —
+MinIO in `docker-compose.yml`, real AWS S3 in production without a code change,
+because boto3 talks to both identically. Postgres stores only the keys.
 
 ```
-storage/uploads/{job_id}/
-  selfie/
-    {uuid}.jpg           ← selfie saved with a UUID filename to avoid collisions
-  archive/
-    {uuid}.zip           ← original ZIP archive
-  event_photos/
-    photo1.jpg           ← extracted from ZIP
-    subdir/photo2.jpg    ← preserves ZIP directory structure
+snapfind/                        ← bucket
+  jobs/{job_id}/
+    selfie/{uuid}.jpg            ← UUID filename, so two clients can't collide
+    archive/{uuid}.zip           ← the uploaded archive, sent in parts
+    event_photos/{uuid}.jpg      ← one object per image extracted from the zip
 ```
 
-ZIP extraction is protected against **path traversal attacks**: we verify every extracted path is actually inside the destination directory using `Path.is_relative_to()` before writing any file. Malicious ZIPs containing paths like `../../etc/passwd` are rejected.
+**Bytes never pass through the API.** The client asks for presigned URLs and
+PUTs directly to storage. That keeps large uploads off the API process
+entirely — it stays free to answer requests while a 500MB archive is moving.
 
-If any error occurs during upload (ZIP extraction fails, no valid images found, etc.), both the database transaction and the entire job directory on disk are rolled back and deleted together, leaving no orphaned files.
+**Uploads resume.** The zip goes up as an S3 multipart upload. If a phone
+loses signal at part 7 of 12, the client asks `GET /jobs/{id}` which parts
+already landed, requests fresh URLs for the rest, and continues. Nothing is
+re-sent.
+
+**Extraction happens in the worker, not the request.** The worker fetches the
+zip, extracts each image, and PUTs it back as its own object. It is
+idempotent — a job processed twice does not re-extract, because the check is
+"does this job already have event_photos rows".
+
+ZIP extraction is still protected against **path traversal**: entries are
+validated before anything is written, so an archive containing
+`../../etc/passwd` is rejected rather than escaping its prefix.
+
+Cleanup is per-prefix: deleting a job removes everything under
+`jobs/{job_id}/` in one call, so a failed job leaves no orphaned objects.
+
+**Known gap:** if a client abandons an upload halfway, the multipart upload is
+never aborted and its parts sit in the bucket indefinitely. A lifecycle rule
+or a sweep job is the fix; neither is implemented yet.
 
 ---
 
@@ -179,26 +203,44 @@ If any error occurs during upload (ZIP extraction fails, no valid images found, 
 ### `GET /`
 Health check. Returns `{ "message": "Event photo finder API is working" }`.
 
-### `POST /jobs/upload`
-Upload the selfie and event photo archive.
+### `POST /jobs/upload/init`
+Create the job and hand back presigned URLs. **No file bytes are sent here** —
+this is a small JSON request that returns places to PUT to.
 
-**Form fields (multipart):**
-- `selfie` — image file (`.jpg`, `.jpeg`, `.png`, `.webp`)
-- `event_photos_zip` — ZIP archive containing event photos
+**Body:** `selfie_filename`, `zip_filename`, `part_count` (how many parts the
+client intends to send).
 
 **What happens internally:**
-1. Validates file types
-2. Creates a job record in the database (flush to get the job ID)
-3. Saves selfie and ZIP to disk under `storage/uploads/{job_id}/`
-4. Extracts the ZIP and records each valid image as an `EventPhoto` row
-5. Commits everything and returns the job summary
+1. Creates the job row, flushes to get the job ID, and builds the object keys
+2. Starts an S3 multipart upload for the zip and stores its `zip_upload_id`
+3. Mints one presigned PUT URL for the selfie and one per zip part
 
-**Returns:** `UploadJobResponse` with `job_id`, `status: "pending"`, and photo count.
+**Returns:** `UploadInitResponse` — `job_id`, `selfie_upload_url`, and
+`zip_upload_urls` as `{part_number, url}` pairs.
+
+The client then PUTs each URL directly to storage. **Send no `Content-Type`
+header**: it is part of the signed string, so a header the server did not sign
+fails the signature — with a 403 on a small body, or a hang on a large one.
+
+### `POST /jobs/{job_id}/upload/urls`
+Fresh URLs for specific parts. This is what makes an upload resumable — used
+to retry parts that failed, or to replace URLs that expired mid-upload.
+
+**Body:** `part_numbers` — the parts still needed.
+
+### `POST /jobs/{job_id}/upload/complete`
+Assembles the parts into the finished zip and clears `zip_upload_id`.
+
+Deliberately does **not** auto-enqueue processing. Finishing an upload and
+asking for matching are separate decisions, so `/process` stays a separate
+call the client makes when it is ready.
 
 ### `GET /jobs/{job_id}`
 Get the current status and summary of a job. Used for polling.
 
-**Returns:** `JobSummaryResponse` with `status`, `matched_photo_count`, and other job metadata.
+**Returns:** `JobSummaryResponse` with `status`, `matched_photo_count`, and
+`uploaded_parts` — which zip parts have landed, so an interrupted client knows
+where to resume. Empty once the upload is finished.
 
 ### `POST /jobs/{job_id}/process?threshold=0.68`
 Trigger face matching for a job.
@@ -207,20 +249,27 @@ Trigger face matching for a job.
 1. Atomically sets `status = queued` (rejects with 409 if already queued or processing)
 2. Pushes a small RQ message into Redis containing the `job_id` and `threshold`
 3. Returns immediately with `status: "queued"`
-4. A separate worker process claims the queued job, sets `status = processing`, computes/loads embeddings, finds matches, saves results, and sets `status = completed`
+4. A separate worker process claims the queued job, sets `status = processing`, extracts the zip if it hasn't been extracted yet, computes/loads embeddings, finds matches, saves results, and sets `status = completed`
 5. If anything fails during processing: marks job as `failed`
 
 **Query param:** `threshold` (float, `0 < threshold < 1.0`, default `0.68`)
 
+Re-running is safe and cheap: `matched_photos` is fully replaced each run, and
+embeddings are cached, so a second pass at a different threshold skips the
+models entirely.
+
 ### `GET /jobs/{job_id}/matches`
 Fetch the list of matched photos with distances and download URLs.
 
-**Returns:** `MatchListResponse` with a list of matches sorted by `match_distance` ascending (closest match first).
+**Returns:** `MatchListResponse`, sorted by `match_distance` ascending (closest
+first). Each entry carries a presigned `download_url` the client can use
+directly — no second call to this API.
 
 ### `GET /jobs/{job_id}/matches/{match_id}/download`
-Download a specific matched photo file.
-
-**Returns:** The raw image file as `application/octet-stream`.
+Kept for compatibility. **Returns a `307` redirect** to a presigned URL rather
+than streaming bytes, so the file comes from object storage and not through
+this process. Clients can skip this hop and use `download_url` from
+`/matches`.
 
 ---
 
@@ -235,9 +284,13 @@ Face_recognition/
 ├── docker-compose.yml         # Orchestrates api, worker, redis, postgres (pgvector-enabled) together
 ├── .dockerignore
 ├── benchmarks/
-│   ├── README.md               # Detector comparison: opencv vs retinaface vs insightface, real numbers
-│   ├── detector_comparison.py  # Runnable script that reproduces those numbers
-│   └── results.json            # Raw output, regenerated on each run
+│   ├── README.md               # What each script measures, and the caveats
+│   ├── RESULTS.md              # Generated output; each script rewrites its own section
+│   ├── _common.py              # Shared scoring, cosine distance, production's crop path
+│   ├── build_corpus.py         # Builds the labelled corpus (LFW + the real jobs). Run first.
+│   ├── evaluate_corpus.py      # Precision/recall/F1 vs ground truth, by face size
+│   ├── compare_embedders.py    # DeepFace ArcFace vs w600k_mbf on identical crops
+│   └── detector_comparison.py  # opencv vs retinaface vs insightface
 ├── api/
 │   ├── routes.py              # All HTTP endpoints
 │   └── schemas.py             # Pydantic response models (what the API returns)
@@ -247,16 +300,18 @@ Face_recognition/
 │   ├── database.py            # SQLAlchemy engine, session factory, get_db dependency
 │   └── orm_models.py          # UploadJob, EventPhoto, MatchedPhoto ORM classes
 ├── services/
-│   ├── upload_service.py      # Upload validation, file saving, job creation
-│   ├── job_service.py         # Job lifecycle: queue, claim, process, status, matches
+│   ├── upload_service.py      # Presigned URLs, multipart lifecycle, job creation
+│   ├── job_service.py         # Job lifecycle: queue, claim, extract, process, status, matches
 │   ├── queue_service.py       # Redis/RQ enqueue helper
 │   ├── face_matcher.py        # ML pipeline: detection, embedding, distance, parallel matching
-│   └── storage_service.py     # Low-level file I/O: save, extract ZIP, path validation
+│   └── storage_service.py     # S3/MinIO: put/get, presigning, multipart, ZIP extraction
 └── storage/
-    ├── uploads/               # Per-job uploaded files (created at runtime)
     ├── deepface/              # DeepFace model weights cache (mtcnn selfie detector, ArcFace embedder)
-    └── insightface/            # insightface model weights cache (event-photo detector)
+    └── insightface/           # insightface model weights cache (event-photo detector + w600k_mbf)
 ```
+
+`storage/` holds **only downloaded model weights** — they are Docker volumes so
+a rebuild doesn't re-fetch ~350MB. No user photo is ever written there.
 
 **Why this structure?** Each layer has one responsibility. `routes.py` only handles HTTP. `job_service.py` only knows about jobs and their lifecycle. `face_matcher.py` only knows about faces. `storage_service.py` only knows about files. This makes each piece testable and replaceable independently.
 
@@ -267,8 +322,38 @@ Face_recognition/
 ### Why FastAPI?
 FastAPI generates interactive API documentation automatically at `/docs`. It validates request and response shapes using Pydantic. It supports async endpoints natively. For a Python ML backend, it is the standard choice.
 
-### Why SQLite?
-Zero infrastructure. No separate database server to run. The file `app.db` is created automatically on startup. For quick local iteration outside Docker, SQLite is completely sufficient. Switching to PostgreSQL requires only changing the `DATABASE_URL` environment variable — this was true by design from the start and has since been verified for real: `docker-compose.yml` runs Postgres by default (see the Work log below), and the exact same SQLAlchemy models generate a correct schema — including a real pgvector `Vector(512)` column — on both backends without any other code change.
+### Why PostgreSQL only?
+This started on SQLite for zero-setup local dev, and the database layer was
+written to be swappable from the start — `DATABASE_URL` and nothing else.
+That paid off when Postgres was introduced: the swap cost one dependency and
+one environment variable.
+
+SQLite has since been **dropped entirely**. Once `embedding` became a real
+pgvector `vector(512)` column rather than JSON text, supporting both meant
+carrying two serialization paths and a `_USES_PGVECTOR` branch for a backend
+nobody actually ran. Postgres is also genuinely more correct here — with
+`WORKER_COUNT > 1` there are concurrent writers, and SQLite is single-writer.
+
+The swappability was still worth having. It is what made the migration cheap;
+keeping the second backend forever after was not.
+
+### Why object storage instead of a disk?
+Photos used to be written under `storage/uploads/{job_id}/`. Three problems,
+all of which appear the moment you run more than one container:
+
+- **A local disk is not shared.** The API wrote the files and the worker read
+  them, which only worked because a Docker volume was mounted into both. Scale
+  the worker onto a second machine and that stops.
+- **Every byte went through the API.** A 500MB archive occupied an API process
+  for the length of the upload.
+- **No resume.** A dropped connection at 90% meant starting over.
+
+S3-compatible storage fixes all three. Clients PUT straight to storage with
+presigned URLs, so the API only ever handles small JSON. Multipart uploads make
+the transfer resumable. And any container can reach the same objects.
+
+MinIO runs it locally; production points at real S3 by changing the endpoint
+and credentials. No code changes, because boto3 speaks to both.
 
 ### Why store embeddings in the database?
 The first time 100 event photos are processed, 100 ArcFace inferences run. That takes time on CPU. If the user re-runs with a different threshold, none of the embeddings have changed — only the cutoff distance has. Without caching, you would run 100 inferences again for no reason. With the `embedding` column in `event_photos`, the second run reads from the database and skips inference entirely.
@@ -311,9 +396,9 @@ Two ways to run this: Docker Compose (one command, everything containerized, mat
 docker compose up -d --build
 ```
 
-This builds one image (shared by `api` and `worker`, see `Dockerfile`) and starts all four services — `api`, `worker`, `redis`, and `postgres` (the `pgvector/pgvector:pg16` image, extension enabled automatically on startup — see `ensure_pgvector_extension()` in `db/database.py`). No local Python install, no manual Redis/Postgres setup. API available at `http://localhost:8000`.
+This builds one image (shared by `api` and `worker`, see `Dockerfile`) and starts all five services — `api`, `worker`, `redis`, `postgres` (the `pgvector/pgvector:pg16` image, extension enabled automatically on startup — see `ensure_pgvector_extension()` in `db/database.py`), and `minio` for object storage. No local Python install, no manual setup. API at `http://localhost:8000`, and the MinIO console at `http://localhost:9001` to browse uploaded objects.
 
-Model weights (~350MB total, first run only) and the Postgres database persist in named Docker volumes (`deepface_weights`, `insightface_weights`, `postgres_data`) across restarts. `docker compose down -v` removes those volumes too — needed if a schema change requires recreating the database (see "Known limitation" below), not needed for a normal restart.
+Model weights (~350MB total, first run only), the Postgres database, and the object store persist in named Docker volumes (`deepface_weights`, `insightface_weights`, `postgres_data`, `minio_data`) across restarts. `docker compose down -v` removes those volumes too — needed if a schema change requires recreating the database (see "Known limitation" below), not needed for a normal restart.
 
 ```powershell
 docker compose logs -f api      # tail one service's logs
@@ -322,23 +407,29 @@ docker compose down             # stop everything, keep volumes
 docker compose down -v          # stop everything, also wipe volumes
 ```
 
-### Option B: Manual (Python venv + standalone Redis)
+### Option B: Manual (Python venv + backing services in Docker)
 
 #### Prerequisites
 - Python 3.10+
 - Virtual environment (recommended)
-- Redis server
+- Redis, Postgres **and** MinIO
 
-Redis is the message broker. You can run it locally with Docker without creating any cloud account:
+All three are required now. SQLite was dropped (the `embedding` column is a
+real pgvector type), and photos live in object storage rather than on disk, so
+there is no zero-dependency mode. The cheapest way is to let compose run just
+the backing services and keep the Python code on the host:
 
 ```powershell
-docker run --name snapfind-redis -p 6379:6379 redis:7
+docker compose up -d redis postgres minio
 ```
 
-If you already have a Redis container with that name, start it again with:
+Then point the app at them — these are the defaults, so you only need to set
+them if you're running the services somewhere else:
 
 ```powershell
-docker start snapfind-redis
+$env:DATABASE_URL   = "postgresql+psycopg2://snapfind:snapfind@localhost:5432/snapfind"
+$env:REDIS_URL      = "redis://localhost:6379/0"
+$env:S3_ENDPOINT_URL = "http://localhost:9000"
 ```
 
 ### Setup
@@ -376,11 +467,20 @@ To run more than one worker process at once (horizontal scaling — see "Why mul
 $env:WORKER_COUNT=4; python worker.py
 ```
 
-The API and worker must both be running:
+All of these must be running:
 
-- API process: handles HTTP requests and enqueues jobs
-- Redis process: stores queued work messages
-- Worker process: consumes queued jobs and runs face matching
+- API process: handles HTTP requests, mints presigned URLs, enqueues jobs
+- Redis: stores queued work messages
+- Worker process: extracts archives and runs face matching
+- Postgres: job state and cached embeddings
+- MinIO: the photos themselves
+
+**Testing from a phone:** `--host 0.0.0.0` exposes the API, but the presigned
+URLs must *also* be reachable from the phone. If they point at `localhost`,
+the phone will resolve that to itself and every upload fails. Set
+`S3_PUBLIC_ENDPOINT_URL` to your machine's LAN address (e.g.
+`http://192.168.1.50:9000`) — that value, not `S3_ENDPOINT_URL`, is what the
+URLs are built from.
 
 On Windows, `worker.py` defaults to RQ's `SimpleWorker`, which avoids Unix-style process forking. On Linux or Docker, set `RQ_WORKER_CLASS=default` to use RQ's normal worker.
 
@@ -396,23 +496,29 @@ On the very first processing request, DeepFace will download the ArcFace model w
 |---|---|---|
 | `APP_NAME` | `Event Photo Finder API` | Title shown in API docs |
 | `APP_VERSION` | `0.1.0` | Version shown in API docs |
-| `DATABASE_URL` | `sqlite:///./app.db` | SQLAlchemy database URL. `docker-compose.yml` overrides this to Postgres — on Postgres, `EventPhoto.embedding` becomes a real pgvector `Vector(512)` column instead of JSON text (see Work log) |
+| `DATABASE_URL` | `postgresql+psycopg2://snapfind:snapfind@localhost:5432/snapfind` | SQLAlchemy database URL. Postgres only — `EventPhoto.embedding` is a real pgvector `vector(512)` column, so there is no second backend to fall back to |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | `snapfind` / `snapfind` / `snapfind` | Only used by `docker-compose.yml`'s Postgres service. Copy `.env.example` to `.env` and set real values for anything beyond local dev — `.env` is gitignored, never committed |
-| `UPLOAD_ROOT` | `storage/uploads` | Directory for uploaded files |
+| `S3_ENDPOINT_URL` | `http://localhost:9000` | Where the **server** reaches object storage. `docker-compose.yml` sets this to `http://minio:9000` |
+| `S3_PUBLIC_ENDPOINT_URL` | same as `S3_ENDPOINT_URL` | Where **clients** reach it. Differs whenever the server's address isn't resolvable by the client — in Docker the server uses `minio:9000` while a phone or browser needs `localhost:9000`. Presigned URLs are built from this |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | `snapfind` / `snapfind123` | Object storage credentials |
+| `S3_BUCKET` | `snapfind` | Bucket holding selfies, archives and event photos |
+| `PRESIGNED_URL_TTL_SECONDS` | `3600` | How long a presigned URL stays valid. Short on purpose — clients re-fetch `/matches` for fresh links rather than holding long-lived ones |
 | `DEEPFACE_HOME` | `storage/deepface` | DeepFace model cache directory |
 | `INSIGHTFACE_HOME` | `storage/insightface` | insightface model cache directory (the event-photo detector's ONNX weights) |
 | `MAX_EVENT_PHOTOS` | `500` | Maximum photos allowed per ZIP |
 | `SELFIE_DETECTOR` | `mtcnn` | Face detector for selfie (accurate) |
 | `FACE_MATCH_WORKERS` | `4` | Parallel threads for event photo processing (within one worker process) |
 | `SELFIE_MAX_DIMENSION` | `1024` | Selfie is downscaled to at most this many pixels on its longest side before inference |
-| `EVENT_PHOTO_MAX_DIMENSION` | `800` | Same, for event photos — see "Why downscale images before inference?" |
+| `EVENT_PHOTO_MAX_DIMENSION` | `800` | Same, for event photos — used for **detection only**; the crop comes from the original |
+| `FACE_DETECTOR_SIZE` | `800` | SCRFD's input size. Deliberately not tied to the downscale settings: measured, `det_size=3200` makes the detector lose large faces entirely because its anchor scales stop matching |
+| `CROP_FROM_ORIGINAL` | `true` | Crop faces from the full-resolution image rather than the downscaled copy. Measured: two different people scored 0.1596 apart on 17px crops — a false match — vs 0.7144 on 73px crops |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string used by both API and worker |
 | `RQ_QUEUE_NAME` | `face-matching` | Queue name used for face matching jobs |
 | `RQ_JOB_TIMEOUT_SECONDS` | `1800` | Maximum runtime for one queued face matching job |
 | `RQ_WORKER_CLASS` | `simple` on Windows, `default` elsewhere | RQ worker implementation. Use `simple` for local Windows testing and `default` for Linux/Docker production |
 | `JOB_STALE_AFTER_SECONDS` | `3600` | How long a queued/processing job can sit before `/process` is allowed to requeue it |
 
-Note: there is no `EVENT_PHOTO_DETECTOR` variable — the event-photo detector is fixed to `insightface`/SCRFD in code, not configurable. It went through two earlier choices first (`opencv`, `retinaface`); that history, the comparison data, and the retired detector code all live in `benchmarks/` at the repo root, not here.
+Note: there is no `EVENT_PHOTO_DETECTOR` variable — the event-photo detector is fixed to `insightface`/SCRFD in code, not configurable. It went through two earlier choices first (`opencv`, `retinaface`); that history, the comparison data, and the retired detector code all live in `benchmarks/`, not in the production path.
 
 ---
 
@@ -437,7 +543,11 @@ These original estimates predate this session's changes and were measured agains
 | `retinaface` (accurate, resized) | ~11s — 4/4 faces, correct but slow |
 | `insightface`/SCRFD (current default) | **~0.4s** — 4/4 faces, verified accurate (see Work log) |
 
-All measured on a sandboxed dev machine whose TensorFlow build isn't using AVX2/FMA (visible in its own startup logs), so absolute numbers will differ on a normal machine — re-run the detector comparison in `benchmarks/detector_comparison.py` (repo root) on your own hardware for numbers you can cite directly. The *relative* pattern (opencv fast-but-broken, retinaface slow-but-correct, insightface fast-and-correct) should hold regardless of hardware, since it was measured identically across all three.
+All measured on a sandboxed dev machine whose TensorFlow build isn't using AVX2/FMA (visible in its own startup logs), so absolute numbers will differ on a normal machine — re-run `benchmarks/detector_comparison.py` on your own hardware for numbers you can cite directly. The *relative* pattern (opencv fast-but-broken, retinaface slow-but-correct, insightface fast-and-correct) should hold regardless of hardware, since it was measured identically across all three.
+
+The table above is the original 4-photo run that drove the decision. Current
+numbers, generated by the scripts and covering accuracy as well as speed, live
+in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md).
 
 For a portfolio demo, test with 15–20 photos. The second run will always be fast thanks to embedding caching.
 
@@ -473,7 +583,7 @@ $env:WORKER_COUNT=4; python worker.py    # 4 worker processes
 - Merged `Face_recognition/SUMMARY.md` into this README (its content was substantially redundant — an "interview-focused" restatement of what README already covered — kept only what was unique: the elevator-pitch cheat-sheet, now under "Interview cheat-sheet" below).
 - Deleted the root `implementation_plan.md` (its original purpose — planning the Android doc set — was long complete); its live "open problems" tracker moved into "Cross-project status" below.
 - On the Android side: merged `SnapFindAI/ARCHITECTURE.md`, `CODE_BREAKDOWN.md`, and `PROJECT_CONTEXT.md` into `SnapFindAI/README.md`, fixing several places where those docs had drifted from the actual code (they described a single `JobRepository.uploadAndProcessJob()` method that doesn't exist; the real code splits that across `JobRepository` + `FindFacesInPhotosUseCase`, which none of the old docs mentioned at all). Kept `ROADMAP.md` separate since forward-looking plans are a genuinely different kind of doc from current-state documentation.
-- **Result:** 8 markdown files → 3 (`Face_recognition/README.md`, `SnapFindAI/README.md`, `SnapFindAI/ROADMAP.md`).
+- **Result at the time:** 8 markdown files → 3 (`Face_recognition/README.md`, `SnapFindAI/README.md`, `SnapFindAI/ROADMAP.md`). The backend README was later split again into a short `README.md` plus this `DEEP_DIVE.md`, and `benchmarks/` carries its own README and generated RESULTS.md.
 
 ### 2026-09-01 — Event-photo detector history: opencv → retinaface → insightface
 
@@ -585,11 +695,56 @@ Since there's no migration tool yet (no Alembic — see "Known limitation" below
 
 **Status:** done. `docker compose config` verified the resolved config is byte-identical to before when no `.env` exists.
 
+### 2026-09-07 → 09-08 — Moved photo storage to MinIO/S3 and made uploads resumable
+
+**Problem raised:** the goal was resumable uploads — a phone that loses signal at
+90% of a 500MB archive shouldn't start over. The first instinct was to hand-roll
+chunking into the existing `POST /jobs/upload`. That was the wrong instinct:
+S3's multipart upload already *is* resumable chunking, specified and
+battle-tested, and adopting an S3-compatible store gets it for free rather than
+reimplementing part tracking, offsets and reassembly by hand.
+
+Two problems came along for the ride, both worse than the one being solved:
+a local upload directory is not shared between containers (it only worked
+because a Docker volume was mounted into both API and worker), and every
+uploaded byte occupied an API process for the duration of the transfer.
+
+**What we did**, in five deliberately separable phases so each could be verified
+before the next:
+
+1. Added `storage_service.py` over boto3 plus the `S3_*` settings, and MinIO to `docker-compose.yml` — nothing using it yet
+2. Put/get/presign/multipart helpers, running **alongside** the filesystem so both paths worked at once
+3. Switched the endpoints over: `upload/init` → presigned PUTs → `upload/urls` (resume) → `upload/complete`, and moved zip extraction into the worker
+4. Renamed the columns to match reality (`selfie_storage_path` → `selfie_object_key`, `storage_path` → `object_key`) and added `zip_object_key` / `zip_upload_id`
+5. Deleted the filesystem code, the `uploads` Docker volume, and then SQLite
+
+**Two bugs worth keeping:**
+
+- **Presigned PUTs returned 403.** `Content-Type` is part of the signed string
+  in AWS Signature V2, so a client sending a header the server never signed
+  fails verification. The contract is now "send no `Content-Type`". The nasty
+  part: on a *large* body the mismatch doesn't error, it **hangs** — the server
+  stops reading while the client is still writing.
+- **Presigned URLs were unreachable from outside Docker.** The API minted them
+  against `http://minio:9000`, which only resolves inside the compose network.
+  Fixed with `S3_PUBLIC_ENDPOINT_URL` and a second boto3 client used only for
+  signing. Confirmed the host isn't actually part of the V2 signature — both
+  endpoints produced the identical signature `4dA76PgyNtYid0PTVUS+Pna/S2Q=` —
+  so swapping it is safe rather than a workaround.
+
+**Verified:** at every phase, the same job produced byte-identical match
+distances to the pre-migration run, and the resumable path was exercised for
+real by interrupting an upload partway, re-reading `uploaded_parts` from
+`GET /jobs/{id}`, requesting fresh URLs, and finishing it.
+
+**Status:** done. Known gap: abandoned multipart uploads are never aborted, so
+their parts linger in the bucket. Needs a lifecycle rule or a sweep.
+
 ### 2026-09-09 — Measured the mobile embedder (`w600k_mbf.onnx`) against DeepFace ArcFace
 
 **Problem raised:** the on-device question ("can face matching run entirely on a phone?") had been answered *infeasible* in the cross-project status list below, but with no measurement behind it — the two reasons given were model size and corpus size vs phone RAM/battery. Meanwhile `storage/insightface/models/buffalo_sc/` already contained `det_500m.onnx` (2.5 MB detector, **already in production**) and `w600k_mbf.onnx` (13.6 MB MobileFaceNet embedder, downloaded 2026-09-01 and never loaded). Together that is a complete on-device stack at 16 MB, versus the 137 MB `arcface_weights.h5` the "too big" conclusion was reasoning about.
 
-**What we did:** wrote `benchmarks/embedder_comparison.py` — the mirror image of `detector_comparison.py`. That script varies the detector and holds the embedder fixed, so its embeddings are directly comparable and "agreement distance ≈ 0" is a valid check. This one varies the **embedder** and holds the detector fixed, so embeddings are *not* comparable (different vector spaces) and it has to compare match/no-match decisions instead. Nine stages; **no production code touched**.
+**What we did:** wrote the embedder comparison (now `benchmarks/compare_embedders.py`) — the mirror image of `detector_comparison.py`. That script varies the detector and holds the embedder fixed, so its embeddings are directly comparable and "agreement distance ≈ 0" is a valid check. This one varies the **embedder** and holds the detector fixed, so embeddings are *not* comparable (different vector spaces) and it has to compare match/no-match decisions instead. Nine stages; **no production code touched**.
 
 Two deliberate deviations from production, both because it measures the path that could actually ship on Android: the selfie is detected with SCRFD rather than mtcnn (mtcnn is TensorFlow), and both embedders receive byte-identical aligned crops so the embedder is the only variable.
 
@@ -621,7 +776,7 @@ DeepFace fails in all four, so this doesn't rescue it — but production uses th
 - **The 800px downscale destroys small faces.** At `event_photo_max_dimension=800`, faces in these 4000px photos come out at 318, 835 and 755 px² — roughly 18×18 to 29×29 pixels, upscaled to 112×112. Raising the ceiling improves `w600k_mbf` materially (P2: 0.674 → 0.561) and DeepFace barely at all. The 10x speedup from downscaling was measured back in the perf pass; its recall cost never was.
 - **Largest-face-only picks the wrong person.** One sample photo contains two people; the bystander's face is 8250 px² and the target's is 7770 px² — 6% smaller. `max(faces, key=area)` (`face_matcher.py:174`) therefore scores the wrong person, and which face wins flips with resolution.
 
-**Status:** measured, documented, **nothing changed in production**. Full numbers and caveats in [`benchmarks/README.md`](benchmarks/README.md), raw output in `benchmarks/embedder_results.json`.
+**Status:** measured, documented, **nothing changed in production**. Full numbers and caveats in [`benchmarks/README.md`](benchmarks/README.md), raw output in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md).
 
 **Heavily caveated:** one identity and two different-person pairs, all from a single person on a single trip — one outfit, one hairstyle, similar lighting. This is enough to kill the "on-device is infeasible" conclusion and enough to justify the next step; it is **not** enough to trust 0.74 as a threshold or to swap production's embedder on. The obvious next measurement is more identities.
 
@@ -629,7 +784,7 @@ DeepFace fails in all four, so this doesn't rescue it — but production uses th
 
 **Problem raised:** the embedder benchmark above measured a *reimplementation* of the production pipeline, and it had reported "production returns 1 of 4" using SCRFD on the selfie where production actually uses mtcnn. Two fair objections: the numbers weren't traceable to a specific job, and a reimplementation proves nothing about the real code.
 
-**What we did:** wrote `benchmarks/verify_production.py`, which imports `services/face_matcher.py` and calls the actual `_selfie_embedding()`, `_event_photo_embedding()` and `_cosine_distance()` over every job under `storage/uploads/`. Only `_load_resized_image()` is bypassed (it fetches from S3/MinIO); the resize maths and `settings` values are identical. Job ids and selfie SHA-256 prefixes are printed so any number can be traced back to a file.
+**What we did:** ran the actual `services/face_matcher.py` functions over every job under `storage/uploads/` — no reimplementation — with only the S3 fetch bypassed. Those jobs are now part of the corpus, so `benchmarks/evaluate_corpus.py` covers the same ground next to the labelled data.
 
 **Corrected number:** production returns **0 of 4** on job `24c8ea7c…`, not 1 of 4. The earlier figure used SCRFD for the selfie; mtcnn is worse here. `IMG_20250302_155231085` scores 0.6846 against a 0.68 threshold — a miss by 0.0046.
 
@@ -645,7 +800,7 @@ DeepFace fails in all four, so this doesn't rescue it — but production uses th
 
 **Half wrong.** The face is *not* hallucinated: zooming into the source shows a 1842×4096 beach photo in which the subject's face occupies **132×164 real pixels**, him in profile wearing blue round sunglasses. The orange and blue in the crop were his skin and his sunglasses. mtcnn found the right person.
 
-**But the "degenerate embedding" half was right, for a different reason** — established by `pipeline_audit/` and the controlled test below. It is not that the *face* is garbage. It is that **DeepFace ArcFace collapses small faces together regardless of who they are.**
+**But the "degenerate embedding" half was right, for a different reason** — established by a separate audit pass (since folded into `benchmarks/`) and the controlled test below. It is not that the *face* is garbage. It is that **DeepFace ArcFace collapses small faces together regardless of who they are.**
 
 ### 2026-09-09 (cont.) — Root cause: the embedder false-accepts small faces
 
@@ -671,7 +826,9 @@ The failure mode is therefore **false accepts on small faces and false rejects a
 
 ### The fix that would have broken production
 
-`pipeline_audit/audit_event_path.py` also caught a coupling that invalidates the obvious remedy. `face_matcher.py:45` sets the detector input from the same setting as the downscale:
+The audit also caught a coupling that invalidates the obvious remedy. At the
+time, `face_matcher.py` set the detector's input size from the *same* setting
+as the downscale:
 
 ```python
 app.prepare(ctx_id=-1, det_size=(settings.event_photo_max_dimension,) * 2)
@@ -698,7 +855,17 @@ At 3200 the detector loses a 383×383 px face and returns noise instead. **Raisi
 
 **Method note:** a suspicious number (0.0066) was flagged correctly, explained with a guess, retracted on a second guess, and only settled by a controlled test that varied one thing at a time. Two of the three intermediate positions were wrong. Look at the source image *and* run the isolation test before writing a conclusion down.
 
-**Status:** measured and documented, **nothing changed in production**. Raw output in `benchmarks/verify_production_results.json`.
+**Where that list stands now** (the list above is the snapshot as written; this
+is what actually happened to each item):
+
+| # | Bug | Status |
+|---|---|---|
+| 1 | Embedder false-accepts small faces | **Mitigated, not by the model.** Cropping from the original made 17px crops into real faces. `w600k_mbf` measured better but is **not adopted** — production still runs DeepFace ArcFace |
+| 2 | `det_size` coupled to the downscale | **Fixed.** `FACE_DETECTOR_SIZE` is its own setting, pinned at 800 |
+| 3 | Largest-face-only on event photos | **Fixed.** Every detected face is scored; the closest wins |
+| 4 | Selfie takes `result[0]` | **Still open.** The selfie path is unchanged — it downscales to 1024px, detects with mtcnn, and takes the first face |
+
+**Status:** this is what surfaced the downscale bug; the fix is described below. Current numbers in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md).
 
 ### Idea, largely answered 2026-09-09 — drop DeepFace/TensorFlow entirely for event photos
 
@@ -717,14 +884,16 @@ Raised 2026-09-01, deliberately not implemented yet. The insightface `buffalo_sc
 
 This backend is one half of SnapFind AI — the Android client lives in `../SnapFindAI/` (its own README covers the app side). Tracking both projects' open items here since the reasoning behind them is shared:
 
-1. **Backend performance** — in progress. Downscaling + horizontal worker scaling done; the event-photo detector went through a full opencv→retinaface→insightface cycle (see Work log) and is now both correct and fast. Still open: GPU inference, batch inference, larger-scale accuracy validation of the current detector.
-2. **Android UI** — currently a bare-bones MVP (two buttons + a spinner); needs a redesign that reads as portfolio-quality. Not started.
+1. **Backend performance** — in progress. Downscaling + horizontal worker scaling done; the event-photo detector went through a full opencv→retinaface→insightface cycle (see Work log) and is now both correct and fast. Larger-scale accuracy validation is now done too — a labelled corpus built from LFW gives precision/recall against known answers, broken down by face size. Still open: GPU inference, batch inference.
+2. **Android client — currently broken against this backend.** `SnapFindApi.kt` still calls `POST jobs/upload`, which the object-storage migration removed. The app needs the new four-step flow (`upload/init` → presigned PUTs → `upload/complete` → `process`) before it can upload anything at all. Separately, the UI is still a bare-bones MVP (two buttons + a spinner) and needs a redesign that reads as portfolio-quality.
 3. **On-device / hybrid matching** — ~~found infeasible (model size + corpus size vs phone RAM/battery budget)~~ **that conclusion was wrong and is retracted as of 2026-09-09.** It was never measured, and both stated reasons fail against the actual files: the full on-device stack is `det_500m.onnx` (2.5 MB, already in production) plus `w600k_mbf.onnx` (13.6 MB) = **16 MB**, not the 137 MB TensorFlow ArcFace the size argument was reasoning about; and matching cost is dominated by embedding, which measured **15.6 ms/face single-threaded** — a 500-photo archive projects to under a minute per core on this machine. See the 2026-09-09 work log entry. Next step is an on-device timing harness (the one number this repo genuinely cannot produce: sustained throughput on real phone hardware, with thermal throttling over a full 500-photo batch). Still sequenced after backend performance work.
-4. **Resume claims gap-check** — compared the resume's project bullets against actual repo state. True today: FastAPI, Python, face embeddings, REST API count (6 endpoints). The "25-30% improvement via preprocessing" claim now has real, measured backing — image downscaling + the detector swap together are a documented, reproducible speedup, not a guess. **Docker, PostgreSQL, and vector similarity search (pgvector) are now also true** — containerized, run and verified end-to-end against a live Postgres container with a real `vector(512)` column, not just written and hoped-for (see the Docker + PostgreSQL section and the pgvector Work log entry above). Still not yet true / roadmap-only: Google Drive ingestion, the "90%+" manual-effort-reduction number (still needs its own benchmark, unrelated to inference speed). **Decided 2026-09-02: not pursuing the 1000+ photo batch claim as engineering work.** 500 (the current `MAX_EVENT_PHOTOS` default) is already realistic for the actual use case (event/wedding albums rarely exceed a few hundred photos), and stress-testing to 1000+ would only have been to hit that specific resume number, not a real product need — cheaper and more honest to adjust the resume wording to "500+" than to build and validate for a scale the product doesn't actually need.
+4. **Resume claims gap-check** — compared the resume's project bullets against actual repo state. True today: FastAPI, Python, face embeddings, REST API count (7 job endpoints plus a health check). The "25-30% improvement via preprocessing" claim now has real, measured backing — image downscaling + the detector swap together are a documented, reproducible speedup, not a guess. **Docker, PostgreSQL, and vector similarity search (pgvector) are now also true** — containerized, run and verified end-to-end against a live Postgres container with a real `vector(512)` column, not just written and hoped-for (see the Docker + PostgreSQL section and the pgvector Work log entry above). Still not yet true / roadmap-only: Google Drive ingestion, the "90%+" manual-effort-reduction number (still needs its own benchmark, unrelated to inference speed). **Decided 2026-09-02: not pursuing the 1000+ photo batch claim as engineering work.** 500 (the current `MAX_EVENT_PHOTOS` default) is already realistic for the actual use case (event/wedding albums rarely exceed a few hundred photos), and stress-testing to 1000+ would only have been to hit that specific resume number, not a real product need — cheaper and more honest to adjust the resume wording to "500+" than to build and validate for a scale the product doesn't actually need.
 
 ## Interview cheat-sheet
 
-The elevator pitch: "This project uses FastAPI for the API layer, SQLite for persistent job/result storage, Redis as the message broker, and RQ as the Python job queue. Uploading photos creates a job in the database. When processing is requested, the API does not run face recognition in the request — it marks the job as queued, sends a message to Redis, and returns immediately. A separate worker consumes the queue, marks the job as processing, runs DeepFace matching, stores matches, and marks the job completed or failed. The client polls job status and fetches results when ready."
+The elevator pitch: "This project uses FastAPI for the API layer, PostgreSQL with pgvector for job state and face embeddings, S3-compatible object storage for the photos themselves, Redis as the message broker, and RQ as the Python job queue. Clients upload straight to object storage with presigned URLs, so no image bytes pass through the API — and the archive goes up as a multipart upload, so a dropped connection resumes instead of restarting. When processing is requested, the API does not run face recognition in the request — it marks the job as queued, sends a message to Redis, and returns immediately. A separate worker consumes the queue, extracts the archive, runs matching, stores results, and marks the job completed or failed. The client polls job status and fetches results when ready."
+
+On storage: "Photos are not on the API's disk. A local directory only works while every process is on one machine — the moment the worker scales out, it breaks. Object storage also lets the client upload directly, which keeps a 500MB archive from occupying an API process for the length of the transfer. MinIO runs it locally and the same boto3 code points at real S3 in production."
 
 On reliability: "The database is the source of truth for job state. Atomic SQL updates prevent duplicate workers from processing the same job. Timestamps like `queued_at` and `processing_started_at` allow stale jobs to be retried, so a crash does not leave a job stuck in progress forever."
 
