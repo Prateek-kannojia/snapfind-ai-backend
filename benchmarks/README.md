@@ -84,15 +84,15 @@ Two candidates:
 | Runtime | TensorFlow | ONNX Runtime |
 | Size | 137 MB | **13.6 MB** |
 | Runs on Android | no | **yes** |
-| Status | current production | already in `storage/insightface/models/buffalo_sc/` |
+| Status | current production | already in `models/insightface/models/buffalo_sc/` |
 
 `w600k_mbf.onnx` ships *inside* the `buffalo_sc` pack downloaded for detection — it has been sitting on disk unused since 2026-09-01, because `face_matcher.py` passes `allowed_modules=["detection"]`.
 
 ```powershell
-venv\Scripts\python.exe benchmarks\embedder_comparison.py
+venv\Scripts\python.exe benchmarks\compare_embedders.py
 ```
 
-Needs a selfie at `benchmarks/sample_photos/selfie/` in addition to the event photos.
+Reads the corpus in `benchmarks/sample_test_data/`; build it with `build_corpus.py` first.
 
 ### Results
 
@@ -155,8 +155,8 @@ Raising it improves `w600k_mbf` materially (P2: 0.674 → 0.561) and DeepFace ba
 This is the run that found the bug, kept as a record of the *broken* pipeline —
 the numbers below are from before the two-stage crop fix.
 
-It used a script that ran the real `face_matcher.py` functions over every job
-under `storage/uploads/`. Those jobs are now folded into the corpus instead, so
+It used a script that ran the real `face_matcher.py` functions over every real
+job on disk. Those jobs are now folded into the corpus instead, so
 `evaluate_corpus.py` covers the same ground alongside the labelled data, and
 that script is gone. Current numbers: [`RESULTS.md`](RESULTS.md).
 
@@ -251,21 +251,27 @@ Four scripts. Each answers one question and writes its own section of
 
 | script | question it answers |
 |---|---|
-| `build_corpus.py` | **Run first.** Builds the labelled corpus: 10 LFW identities composited into phone-sized canvases at controlled face sizes, plus the real jobs already in `storage/uploads/`, with ground truth for both. |
+| `build_corpus.py` | **Run first.** Composites 10 LFW identities into phone-sized canvases at controlled face sizes, writing them into `sample_test_data/` alongside the real jobs already there. Only the `job*` folders are regenerated — the real ones cannot be rebuilt, so they are never touched. |
 | `evaluate_corpus.py` | How accurate is the pipeline? Precision/recall/F1 against that ground truth, by face size, across a threshold sweep. |
 | `compare_embedders.py` | DeepFace ArcFace vs `w600k_mbf` on identical crops. Validates the ONNX port against insightface's own reference before trusting a single number. |
 | `detector_comparison.py` | Which detector, and what did the two rejected ones actually cost? opencv → retinaface → insightface, all on identical input. |
 
-`_common.py` holds what they share — scoring, cosine distance, production's
-crop path, and the RESULTS.md section writer.
+`_common.py` holds what they share — job discovery, label parsing, scoring,
+cosine distance, production's crop path, and the RESULTS.md section writer.
+
+**There is no ground-truth file.** Labels live in the filenames
+build_corpus.py writes (`p03_pos_240px.jpg` = target present, 240px face),
+which the pipeline preserves as `original_filename`. The real photos carry no
+such marker, so their labels — the one thing no script can derive — sit in
+`REAL_JOBS` in `_common.py`.
 
 Real and synthetic are scored separately, never averaged. The real jobs are
 all-positive, so they measure recall and cannot measure precision; the
 synthetic ones carry the face-size axis that real photos don't.
 
 **Gitignored**
-- `sample_photos/` — real photos, kept out of a public repo
-- `corpus/` — generated; rebuild with `build_corpus.py`
+- `sample_test_data/` — real photos plus the generated corpus, kept out of a public repo
+
 - `*_log.txt` — run output
 
 `RESULTS.md` is committed: it's the readable output, and regenerated in place

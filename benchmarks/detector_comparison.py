@@ -21,7 +21,6 @@ as an argument. retinaface is slow on CPU, so only a sample is used.
 """
 from __future__ import annotations
 
-import json
 import random
 import sys
 import time
@@ -29,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _common import CORPUS, cosine, md_table, p, write_results_section  # noqa: E402
+from _common import cosine, discover_jobs, md_table, p, write_results_section  # noqa: E402
 
 import os  # noqa: E402
 
@@ -56,16 +55,12 @@ def corpus_photos() -> tuple[list[Path], set[str]]:
     Also returns which of them are real photos: the synthetic ones are
     composites holding two faces, which matters when reading agreement.
     """
-    gt_path = CORPUS / "ground_truth.json"
-    if not gt_path.exists():
-        raise SystemExit(f"No corpus at {CORPUS} — run build_corpus.py first")
     photos, real = [], set()
-    for job in json.loads(gt_path.read_text()):
-        root = Path(job["root"]) / "event_photos"
-        for ph in job["event_photos"]:
-            photos.append(root / ph["file"])
-            if job.get("source") == "real":
-                real.add(ph["file"])
+    for job in discover_jobs():
+        for ph in job["photos"]:
+            photos.append(ph)
+            if job["source"] == "real":
+                real.add(ph.name)
     random.Random(0).shuffle(photos)
     return photos[:SAMPLE_SIZE], real
 

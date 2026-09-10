@@ -13,10 +13,87 @@ from pathlib import Path
 
 BENCHMARKS = Path(__file__).resolve().parent
 BACKEND = BENCHMARKS.parent
-CORPUS = BENCHMARKS / "corpus"
+SAMPLE_DATA = BENCHMARKS / "sample_test_data"
 RESULTS_MD = BENCHMARKS / "RESULTS.md"
 
 sys.path.insert(0, str(BACKEND))
+
+# The real jobs, keyed by the job id they were uploaded under. Synthetic jobs
+# carry their labels in the filename; these photos don't, so the human
+# judgement lives here — the one thing no script can derive.
+REAL_JOBS = {
+    "24c8ea7c-093a-4694-b33d-9a4585978a98": {
+        "target_in_all": True,   # correct person, clearly usable
+        "ambiguous": False,
+    },
+    "6fe1d707-565a-4f7f-a5b8-4faf75fca594": {
+        "target_in_all": True,
+        "ambiguous": False,
+    },
+    "4092130d-f8ff-4218-ab6b-c2fef1d65bab": {
+        "target_in_all": True,
+        # Selfie is a four-person group shot and production picks a face
+        # arbitrarily, so "the target" is not well defined. Reported
+        # separately, kept out of headline metrics.
+        "ambiguous": True,
+    },
+}
+
+
+def label_from(filename: str) -> tuple[bool | None, int | None]:
+    """(contains_target, face_px), read from the name build_corpus.py gave it.
+
+    This is why there is no ground-truth file: `p03_pos_240px.jpg` already
+    says everything, and the pipeline preserves it as original_filename.
+    Returns (None, None) for real photos, which carry no marker.
+    """
+    m = re.search(r"_(pos|neg)_(\d+)px", filename)
+    if not m:
+        return None, None
+    return m.group(1) == "pos", int(m.group(2))
+
+
+def discover_jobs() -> list[dict]:
+    """Every job in sample_test_data — synthetic first, then real.
+
+    Synthetic folders are named `job01_...`; real ones are named by their
+    job id and must appear in REAL_JOBS to be labelled.
+    """
+    if not SAMPLE_DATA.exists():
+        raise SystemExit(f"No test data at {SAMPLE_DATA} — run build_corpus.py first")
+
+    jobs = []
+    for job_dir in sorted(SAMPLE_DATA.glob("job*")):
+        selfie = job_dir / "selfie" / "selfie.jpg"
+        photos = sorted((job_dir / "event_photos").glob("*.jpg"))
+        if selfie.exists() and photos:
+            jobs.append({"name": job_dir.name, "source": "synthetic", "ambiguous": False,
+                         "selfie": selfie, "photos": photos, "all_positive": True})
+
+    for job_id, meta in REAL_JOBS.items():
+        job_dir = SAMPLE_DATA / job_id
+        selfie = next((job_dir / "selfie").glob("*.jpg"), None) if job_dir.exists() else None
+        photos = sorted((job_dir / "event_photos").glob("*.jpg")) if job_dir.exists() else []
+        if selfie and photos:
+            jobs.append({"name": f"real_{job_id[:8]}", "source": "real",
+                         "ambiguous": meta["ambiguous"], "selfie": selfie,
+                         "photos": photos, "all_positive": meta["target_in_all"]})
+    return jobs
+
+
+def records_for(job: dict, distance_of) -> list[dict]:
+    """Score one job's photos. `distance_of(selfie, photo_path)` returns the
+    cosine distance, or None when no face was found."""
+    out = []
+    for ph in job["photos"]:
+        truth, face_px = label_from(ph.name)
+        if truth is None:
+            truth = job["all_positive"]
+        out.append({"job": job["name"], "source": job["source"],
+                    "ambiguous": job["ambiguous"], "truth": truth,
+                    "face_px": face_px, "file": ph.name,
+                    "d": distance_of(job, ph)})
+    return out
 
 
 def p(msg: str = "") -> None:

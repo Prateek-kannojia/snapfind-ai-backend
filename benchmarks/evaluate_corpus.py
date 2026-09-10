@@ -11,8 +11,8 @@ build_corpus.py writes, which the pipeline preserves as original_filename:
     p03_pos_240px.jpg  ->  target present, face 240px wide
     p11_neg_110px.jpg  ->  target absent
 
-Real photos carry no marker; their labels come from REAL_JOBS in
-build_corpus.py, where that human judgement already lives.
+Real photos carry no marker; their labels come from REAL_JOBS in _common.py,
+where that human judgement already lives.
 
 Each job is processed once at a threshold just under 1.0, so every detected
 face comes back with its distance. The sweep is then arithmetic on those
@@ -24,7 +24,6 @@ numbers instead of nine more trips through the models.
 from __future__ import annotations
 
 import io
-import re
 import sys
 import time
 import zipfile
@@ -35,8 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import requests  # noqa: E402
 
-from _common import BACKEND, CORPUS, md_table, p, score, write_results_section  # noqa: E402
-from build_corpus import REAL_JOBS  # noqa: E402
+from _common import (  # noqa: E402
+    SAMPLE_DATA, discover_jobs, label_from, md_table, p, score, write_results_section,
+)
 
 API = "http://localhost:8000"
 PART_SIZE = 8 * 1024 * 1024        # S3 multipart floor is 5MB per non-final part
@@ -44,36 +44,6 @@ COLLECT_THRESHOLD = 0.99           # route requires < 1.0; returns every detecte
 THRESHOLDS = [0.50, 0.55, 0.60, 0.65, 0.68, 0.70, 0.75, 0.80, 0.85]
 DEFAULT_THRESHOLD = 0.68
 POLL_TIMEOUT = 900
-
-
-def label_from(filename: str) -> tuple[bool | None, int | None]:
-    """(contains_target, face_px) read from the name build_corpus.py gave it.
-    (None, None) for real photos, which carry no marker."""
-    m = re.search(r"_(pos|neg)_(\d+)px", filename)
-    if not m:
-        return None, None
-    return m.group(1) == "pos", int(m.group(2))
-
-
-def discover_jobs() -> list[dict]:
-    jobs = []
-    for job_dir in sorted(CORPUS.glob("job*")):
-        selfie = job_dir / "selfie" / "selfie.jpg"
-        photos = sorted((job_dir / "event_photos").glob("*.jpg"))
-        if selfie.exists() and photos:
-            jobs.append({"name": job_dir.name, "source": "synthetic", "ambiguous": False,
-                         "selfie": selfie, "photos": photos, "all_positive": True})
-
-    uploads = BACKEND / "storage" / "uploads"
-    for job_id, meta in REAL_JOBS.items():
-        job_dir = uploads / job_id
-        selfie = next((job_dir / "selfie").glob("*.jpg"), None)
-        photos = sorted((job_dir / "event_photos").glob("*.jpg"))
-        if selfie and photos:
-            jobs.append({"name": f"real_{job_id[:8]}", "source": "real",
-                         "ambiguous": meta["ambiguous"], "selfie": selfie,
-                         "photos": photos, "all_positive": meta["target_in_all"]})
-    return jobs
 
 
 def zip_bytes(photos: list[Path]) -> bytes:
@@ -157,7 +127,7 @@ def run_job(job: dict) -> list[dict]:
 def main() -> None:
     jobs = discover_jobs()
     if not jobs:
-        raise SystemExit(f"No corpus at {CORPUS} — run build_corpus.py first")
+        raise SystemExit(f"No test data at {SAMPLE_DATA} — run build_corpus.py first")
 
     # Optional name filters, for a quick partial run. A partial run does not
     # touch RESULTS.md — a subset written into that section would read as the

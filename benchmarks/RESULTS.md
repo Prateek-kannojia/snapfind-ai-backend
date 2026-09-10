@@ -65,7 +65,7 @@ _Ran in 129s._
 <!-- embedders:start -->
 ## Embedder comparison
 
-_generated 2026-09-09 17:34_
+_generated 2026-09-10 13:40_
 
 Same photos, same detector, same crops — only the embedder differs. Each model gets its own threshold sweep, because the two produce different vector spaces and a shared threshold would mean nothing.
 
@@ -73,15 +73,15 @@ ONNX port validated against insightface's own reference: `-0.00000000`. If that 
 
 | model | best threshold | precision | recall | F1 | accuracy | FP | embed time |
 |---|---|---|---|---|---|---|---|
-| DeepFace ArcFace | 0.65 | 0.955 | 0.829 | **0.887** | 0.895 | 3 | 72s |
-| w600k_mbf | 0.60 | 1.000 | 0.842 | **0.914** | 0.922 | 0 | 2s |
+| DeepFace ArcFace | 0.65 | 0.955 | 0.829 | **0.887** | 0.895 | 3 | 102s |
+| w600k_mbf | 0.60 | 1.000 | 0.842 | **0.914** | 0.922 | 0 | 6s |
 
 **Separability** — a threshold can only work if the worst same-person pair scores closer than the best different-person pair:
 
 | model | worst SAME | best DIFFERENT | gap |
 |---|---|---|---|
-| DeepFace ArcFace | 1.1546 | 0.5351 | -0.6195 |
-| w600k_mbf | 1.0509 | 0.8085 | -0.2424 |
+| DeepFace ArcFace | 1.1534 | 0.5327 | -0.6207 |
+| w600k_mbf | 1.0485 | 0.8082 | -0.2403 |
 
 A negative gap means the two ranges overlap, so no threshold is perfect for that model.
 

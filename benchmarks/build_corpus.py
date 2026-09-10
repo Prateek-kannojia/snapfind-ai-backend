@@ -26,30 +26,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from _common import BACKEND, CORPUS as OUT, p
+from _common import SAMPLE_DATA as OUT, discover_jobs, p
 
-# Your three real jobs, folded in so there is ONE evaluation path instead of
-# two. Ground truth taken from the analysis in README.md section 3 - correct
-# it here if any of it is wrong, the numbers depend on it.
-#
-# They are referenced in place (storage/uploads), not copied.
-REAL_JOBS = {
-    "24c8ea7c-093a-4694-b33d-9a4585978a98": {
-        "target_in_all": True,   # README: "correct person, clearly usable - 0/4 is a real failure"
-        "ambiguous": False,
-    },
-    "6fe1d707-565a-4f7f-a5b8-4faf75fca594": {
-        "target_in_all": True,   # README: "4/4 is correct", verified against the source photo
-        "ambiguous": False,
-    },
-    "4092130d-f8ff-4218-ab6b-c2fef1d65bab": {
-        "target_in_all": True,
-        # Selfie is a 4-person group shot and production picks a face
-        # arbitrarily, so "the target" is not well defined. Reported but
-        # excluded from headline metrics.
-        "ambiguous": True,
-    },
-}
 JOBS = 10
 PHOTOS_PER_JOB = (12, 18)      # inclusive range
 CANVAS = (3000, 2000)          # w, h — phone-photo shaped
@@ -113,12 +91,19 @@ def main() -> None:
     targets = chosen[:JOBS]
     distractor_pool = chosen[JOBS:]
 
-    if OUT.exists():
-        import shutil
-        shutil.rmtree(OUT)
-    OUT.mkdir(parents=True)
+    # Only the synthetic jobs are regenerated. The real jobs live in this same
+    # folder and CANNOT be rebuilt from anything, so wiping the whole
+    # directory would destroy them permanently.
+    import shutil
 
-    manifest = []
+    OUT.mkdir(parents=True, exist_ok=True)
+    stale = sorted(OUT.glob("job*"))
+    for job_dir in stale:
+        shutil.rmtree(job_dir)
+    if stale:
+        p(f"removed {len(stale)} previous synthetic job(s); real jobs left alone")
+
+    built = []
     for job_i, target in enumerate(targets):
         shots = list(people[target])
         random.shuffle(shots)
@@ -171,50 +156,24 @@ def main() -> None:
                 "people": present,
             })
 
-        manifest.append({
-            "job_id": job_id,
-            "source": "synthetic",
-            "ambiguous": False,
-            "root": str(job_dir),
-            "target_identity": target,
-            "selfie": "selfie/selfie.jpg",
-            "event_photos": photos,
-            "positives": sum(1 for x in photos if x["contains_target"]),
-            "negatives": sum(1 for x in photos if not x["contains_target"]),
-        })
-        p(f"  {job_id}: {len(photos)} photos "
-          f"({manifest[-1]['positives']} pos / {manifest[-1]['negatives']} neg)")
+        built.append((job_id, len(photos)))
+        pos = sum(1 for x in photos if x["contains_target"])
+        p(f"  {job_id}: {len(photos)} photos ({pos} pos / {len(photos) - pos} neg)")
 
-    # --- real jobs, referenced in place -----------------------------------
-    uploads = BACKEND / "storage" / "uploads"
-    for job_id, meta in REAL_JOBS.items():
-        job_dir = uploads / job_id
-        selfie = next((job_dir / "selfie").glob("*.jpg"), None)
-        photos = sorted((job_dir / "event_photos").glob("*.jpg"))
-        if selfie is None or not photos:
-            p(f"  (real job {job_id[:8]}... not found on disk, skipped)")
-            continue
-        manifest.append({
-            "job_id": f"real_{job_id[:8]}",
-            "source": "real",
-            "ambiguous": meta["ambiguous"],
-            "root": str(job_dir),
-            "target_identity": "prateek",
-            "selfie": str(selfie.relative_to(job_dir)).replace("\\", "/"),
-            "event_photos": [
-                {"file": ph.name, "contains_target": meta["target_in_all"],
-                 "face_px": None, "people": ["prateek"]}
-                for ph in photos
-            ],
-            "positives": len(photos) if meta["target_in_all"] else 0,
-            "negatives": 0 if meta["target_in_all"] else len(photos),
-        })
-        flag = "  (ambiguous selfie - excluded from headline metrics)" if meta["ambiguous"] else ""
-        p(f"  real_{job_id[:8]}: {len(photos)} photos, all positive{flag}")
+    # No ground-truth file is written. Every label is already in the filename
+    # (`p03_pos_240px.jpg`), which the pipeline preserves as original_filename,
+    # so a manifest would only be a second copy of the same facts — free to
+    # drift, and one more thing to keep in sync. _common.discover_jobs() reads
+    # the folders directly.
+    jobs = discover_jobs()
+    total = sum(len(j["photos"]) for j in jobs)
+    real = [j for j in jobs if j["source"] == "real"]
+    p(f"\n{len(built)} synthetic jobs built; {len(jobs)} jobs total "
+      f"({len(real)} real), {total} event photos in {OUT}")
+    for j in real:
+        flag = "  (ambiguous selfie - excluded from headline metrics)" if j["ambiguous"] else ""
+        p(f"  {j['name']}: {len(j['photos'])} photos, all positive{flag}")
 
-    (OUT / "ground_truth.json").write_text(json.dumps(manifest, indent=2))
-    total = sum(len(j["event_photos"]) for j in manifest)
-    p(f"\n{len(manifest)} jobs, {total} event photos, ground truth -> {OUT / 'ground_truth.json'}")
     p("\nCAVEATS: composited faces on synthetic backgrounds. Real photos have")
     p("lighting/pose/motion-blur variation this does not reproduce. Use it to")
     p("measure precision/recall vs face size, not to claim real-world accuracy.")

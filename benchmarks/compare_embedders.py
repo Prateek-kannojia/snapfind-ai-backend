@@ -11,7 +11,6 @@ Needs a corpus with ground truth; build one with build_corpus.py.
 """
 from __future__ import annotations
 
-import json
 import sys
 import time
 from collections import defaultdict
@@ -24,7 +23,8 @@ import numpy as np  # noqa: E402
 import onnxruntime as ort  # noqa: E402
 
 from _common import (  # noqa: E402
-    CORPUS, aligned_faces, cosine, md_table, p, score, write_results_section,
+    aligned_faces, cosine, discover_jobs, label_from, md_table, p, score,
+    write_results_section,
 )
 
 from core.settings import settings  # noqa: E402
@@ -66,30 +66,31 @@ def validate_mbf_port(sample: np.ndarray) -> float:
 
 
 def main() -> None:
-    if not (CORPUS / "ground_truth.json").exists():
-        raise SystemExit(f"No corpus at {CORPUS} — run build_corpus.py first")
-    truth = [j for j in json.loads((CORPUS / "ground_truth.json").read_text())
-             if j.get("source") == "synthetic"]  # needs the face-size axis
+    # Synthetic only: this comparison is reported per face size, and real
+    # photos have no known face size to bucket by.
+    truth = [j for j in discover_jobs() if j["source"] == "synthetic"]
+    if not truth:
+        raise SystemExit("No synthetic jobs — run build_corpus.py first")
 
     # Crop once, embed with both — guarantees identical input to each model.
     p("cropping faces (shared by both embedders)...")
     per_photo, selfie_crops = [], {}
     t0 = time.time()
     for job in truth:
-        job_dir = Path(job["root"])
-        sc = aligned_faces(job_dir / job["selfie"])
+        sc = aligned_faces(job["selfie"])
         if not sc:
-            p(f"  {job['job_id']}: no face in selfie, skipped")
+            p(f"  {job['name']}: no face in selfie, skipped")
             continue
-        selfie_crops[job["job_id"]] = max(sc, key=lambda c: c.size)
-        for photo in job["event_photos"]:
+        selfie_crops[job["name"]] = max(sc, key=lambda c: c.size)
+        for photo in job["photos"]:
+            contains, face_px = label_from(photo.name)
             per_photo.append({
-                "job": job["job_id"],
-                "truth": photo["contains_target"],
-                "face_px": photo["face_px"],
-                "crops": aligned_faces(job_dir / "event_photos" / photo["file"]),
+                "job": job["name"],
+                "truth": contains,
+                "face_px": face_px,
+                "crops": aligned_faces(photo),
             })
-        p(f"  {job['job_id']}: {len(job['event_photos'])} photos")
+        p(f"  {job['name']}: {len(job['photos'])} photos")
     p(f"cropping took {time.time() - t0:.0f}s; {len(per_photo)} photos\n")
 
     port_error = validate_mbf_port(next(iter(selfie_crops.values())))
