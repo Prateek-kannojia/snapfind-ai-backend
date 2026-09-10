@@ -1,6 +1,7 @@
 services:
   redis:
     image: redis:7
+    restart: unless-stopped
     ports:
       - "6379:6379"
 
@@ -9,6 +10,7 @@ services:
   # embedding column moves from Text/JSON to a real Vector(512) type.
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-snapfind}
       POSTGRES_USER: ${POSTGRES_USER:-snapfind}
@@ -29,6 +31,7 @@ services:
   # local disk; Postgres stores their object keys. See DEEP_DIVE.md.
   minio:
     image: minio/minio
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-snapfind}
@@ -46,6 +49,7 @@ services:
 
   api:
     build: .
+    restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
@@ -70,6 +74,7 @@ services:
 
   worker:
     build: .
+    restart: unless-stopped
     command: python worker.py
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-snapfind}:${POSTGRES_PASSWORD:-snapfind}@postgres:5432/${POSTGRES_DB:-snapfind}
