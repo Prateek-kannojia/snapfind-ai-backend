@@ -9,55 +9,57 @@ each one measures and the caveats that apply.
 <!-- evaluate:start -->
 ## Matching accuracy
 
-_generated 2026-09-09 17:31_
+_generated 2026-09-10 14:23_
+
+Every job was processed through the running API — real jobs, photos fetched from object storage, the real matcher. Labels come from the filenames, so there is no ground-truth file to drift out of sync.
 
 ### Synthetic corpus — 153 photos, 10 identities
 
 | threshold | precision | recall | F1 | accuracy | TP | FP | FN | TN |
 |---|---|---|---|---|---|---|---|---|
-| 0.5 | 1.000 | 0.711 | 0.831 | 0.856 | 54 | 0 | 22 | 77 |
-| 0.55 | 0.982 | 0.737 | 0.842 | 0.863 | 56 | 1 | 20 | 76 |
-| 0.6 | 0.968 | 0.803 | 0.878 | 0.889 | 61 | 2 | 15 | 75 |
-| 0.65 | 0.955 | 0.829 | 0.887 | 0.895 | 63 | 3 | 13 | 74 |
+| 0.5 | 1.000 | 0.605 | 0.754 | 0.804 | 46 | 0 | 30 | 77 |
+| 0.55 | 1.000 | 0.684 | 0.813 | 0.843 | 52 | 0 | 24 | 77 |
+| 0.6 | 1.000 | 0.763 | 0.866 | 0.882 | 58 | 0 | 18 | 77 |
+| 0.65 | 0.969 | 0.816 | 0.886 | 0.895 | 62 | 2 | 14 | 75 |
 | **0.68** | 0.955 | 0.829 | 0.887 | 0.895 | 63 | 3 | 13 | 74 |
-| 0.7 | 0.940 | 0.829 | 0.881 | 0.889 | 63 | 4 | 13 | 73 |
-| 0.75 | 0.889 | 0.842 | 0.865 | 0.869 | 64 | 8 | 12 | 69 |
-| 0.8 | 0.771 | 0.842 | 0.805 | 0.797 | 64 | 19 | 12 | 58 |
-| 0.85 | 0.722 | 0.855 | 0.783 | 0.765 | 65 | 25 | 11 | 52 |
+| 0.7 | 0.956 | 0.855 | 0.903 | 0.908 | 65 | 3 | 11 | 74 |
+| 0.75 | 0.892 | 0.868 | 0.880 | 0.882 | 66 | 8 | 10 | 69 |
+| 0.8 | 0.861 | 0.895 | 0.877 | 0.876 | 68 | 11 | 8 | 66 |
+| 0.85 | 0.775 | 0.908 | 0.836 | 0.824 | 69 | 20 | 7 | 57 |
 
 **Accuracy by face size** (at 0.68) — face size is the variable that matters most:
 
 | face px | accuracy | TP | FP | FN | TN |
 |---|---|---|---|---|---|
 | 70 | 0.800 | 13 | 0 | 7 | 15 |
-| 110 | 0.848 | 16 | 2 | 3 | 12 |
-| 160 | 0.968 | 14 | 0 | 1 | 16 |
-| 240 | 0.931 | 11 | 1 | 1 | 16 |
-| 340 | 0.960 | 9 | 0 | 1 | 15 |
+| 110 | 0.909 | 17 | 1 | 2 | 13 |
+| 160 | 0.935 | 13 | 0 | 2 | 16 |
+| 240 | 0.931 | 12 | 2 | 0 | 15 |
+| 340 | 0.920 | 8 | 0 | 2 | 15 |
 
 ### Real photos — 8 photos
 
-All positives (the target appears in every event photo), so this measures **recall only** — there are no negatives to get wrong.
+All positives, so this measures **recall only** — there are no negatives to get wrong.
 
 | threshold | recall | matched | missed |
 |---|---|---|---|
 | 0.5 | 0.500 | 4 | 4 |
-| 0.55 | 0.625 | 5 | 3 |
-| 0.6 | 0.625 | 5 | 3 |
-| 0.65 | 0.750 | 6 | 2 |
-| **0.68** | 0.750 | 6 | 2 |
-| 0.7 | 0.750 | 6 | 2 |
+| 0.55 | 0.500 | 4 | 4 |
+| 0.6 | 0.500 | 4 | 4 |
+| 0.65 | 0.500 | 4 | 4 |
+| **0.68** | 0.500 | 4 | 4 |
+| 0.7 | 0.625 | 5 | 3 |
 | 0.75 | 0.750 | 6 | 2 |
 | 0.8 | 0.750 | 6 | 2 |
-| 0.85 | 0.875 | 7 | 1 |
+| 0.85 | 0.750 | 6 | 2 |
 
 ### Excluded — 4 photos
 
-Job `4092130d` has a four-person group photo as its selfie, and production picks a face arbitrarily, so "the target" is not well defined. Reported here but kept out of the numbers above.
+Job `4092130d` uses a four-person group photo as its selfie and production picks a face arbitrarily, so "the target" is not well defined. Reported here, kept out of the numbers above.
 
-At 0.68: matched 1/4.
+At 0.68: matched 0/4.
 
-_Ran in 129s._
+_13 jobs through the API in 494s._
 <!-- evaluate:end -->
 
 ---
@@ -65,16 +67,20 @@ _Ran in 129s._
 <!-- embedders:start -->
 ## Embedder comparison
 
-_generated 2026-09-10 13:40_
+_generated 2026-09-24 02:35_
 
-Same photos, same detector, same crops — only the embedder differs. Each model gets its own threshold sweep, because the two produce different vector spaces and a shared threshold would mean nothing.
+Same photos, same detector, same crops — only the embedder differs. Each model gets its own threshold, chosen on the synthetic corpus, because the two produce different vector spaces and a shared threshold would mean nothing.
 
 ONNX port validated against insightface's own reference: `-0.00000000`. If that is not ~0 the preprocessing is wrong and every number below is meaningless.
 
+### Synthetic corpus
+
+Labelled positives and negatives, so every metric is defined here. This is what picks each model's threshold.
+
 | model | best threshold | precision | recall | F1 | accuracy | FP | embed time |
 |---|---|---|---|---|---|---|---|
-| DeepFace ArcFace | 0.65 | 0.955 | 0.829 | **0.887** | 0.895 | 3 | 102s |
-| w600k_mbf | 0.60 | 1.000 | 0.842 | **0.914** | 0.922 | 0 | 6s |
+| DeepFace ArcFace | 0.65 | 0.955 | 0.829 | **0.887** | 0.895 | 3 | 65s |
+| w600k_mbf | 0.60 | 1.000 | 0.842 | **0.914** | 0.922 | 0 | 4s |
 
 **Separability** — a threshold can only work if the worst same-person pair scores closer than the best different-person pair:
 
@@ -95,6 +101,37 @@ A negative gap means the two ranges overlap, so no threshold is perfect for that
 | 160 | 0.968 | 0.968 |
 | 240 | 0.931 | 0.966 |
 | 340 | 0.960 | 0.960 |
+
+### Real photos — 8 photos
+
+The actual product input, and the harder case: phone photos of one person, not LFW composites. **Every photo contains the target**, so this measures *recall only* — precision is undefined here (with no negatives it would read 1.000 by construction and mean nothing). Each model's synthetic-derived threshold is marked **bold**.
+
+| threshold | DeepFace ArcFace | w600k_mbf |
+|---|---|---|
+| 0.30 | 3/8 | 1/8 |
+| 0.35 | 3/8 | 1/8 |
+| 0.40 | 3/8 | 1/8 |
+| 0.45 | 4/8 | 1/8 |
+| 0.50 | 4/8 | 3/8 |
+| 0.55 | 5/8 | 5/8 |
+| 0.60 | 5/8 | **7/8** |
+| 0.65 | **6/8** | 7/8 |
+| 0.70 | 6/8 | 8/8 |
+| 0.75 | 6/8 | 8/8 |
+| 0.80 | 6/8 | 8/8 |
+| 0.85 | 7/8 | 8/8 |
+| 0.90 | 8/8 | 8/8 |
+| 0.95 | 8/8 | 8/8 |
+| 1.00 | 8/8 | 8/8 |
+
+The question this answers: how far does the threshold have to move before each model recovers the real photos — and what that costs back on the labelled corpus, where false positives are measurable:
+
+| model | threshold for 8/8 real | synthetic precision there | synthetic FP there |
+|---|---|---|---|
+| DeepFace ArcFace | 0.90 | 0.606 | 43 |
+| w600k_mbf | 0.70 | 1.000 | 0 |
+
+**Excluded — 4 photos.** Job `4092130d` uses a four-person group photo as its selfie and production picks a face arbitrarily, so "the target" is not well defined. Kept out of the numbers above.
 <!-- embedders:end -->
 
 ---
