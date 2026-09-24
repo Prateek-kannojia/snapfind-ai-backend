@@ -27,6 +27,11 @@ Before comparing faces, we need to locate the face inside each image. This is ca
 
 This split (accurate for selfie, fast-and-still-accurate for bulk) is a deliberate tradeoff between speed and reliability — see the Work log for how "fast" and "accurate" were actually measured against real photos rather than assumed.
 
+Two refinements to the event-photo path, both from measurement (2026-09-09/10 work log):
+
+- **Detection and cropping run at different resolutions.** SCRFD detects on the downscaled copy (`EVENT_PHOTO_MAX_DIMENSION`, 800px — detection is cheap and works fine there), but the 112×112 crop is taken from the **original** image (`CROP_FROM_ORIGINAL`). Cropping from the downscale was turning a 90px face into an 18px one, and at that size the embedder stopped discriminating: two *different* people measured 0.1596 apart, a false match under a 0.68 threshold, versus 0.7144 on 73px crops. The detector's input size is a separate setting (`FACE_DETECTOR_SIZE`) precisely so raising one does not silently change the other — measured, `det_size=3200` makes SCRFD lose large faces outright.
+- **Every detected face is scored, not just the largest.** The old rule took `max(faces, key=area)`, which picked the wrong person whenever a bystander stood slightly closer to the camera — measured on a real photo where the bystander's face was 8250 px² against the target's 7770 px². The closest face now wins.
+
 ### Step 2 — Face Embedding (the core of face recognition)
 
 Once a face is detected and cropped, we pass it through a deep neural network called **ArcFace**. ArcFace does not classify who the person is — instead, it converts the face image into a list of 512 numbers called an **embedding** (or feature vector).
@@ -64,6 +69,8 @@ The **threshold** is the cutoff distance. Any event photo with a distance ≤ th
 - Default: `0.68` (balanced between missing matches and false positives)
 - Lower = stricter (fewer matches, higher confidence)
 - Upper bound: `1.0` (validated in the API to prevent nonsense values)
+
+`0.68` predates the labelled corpus and was never derived from data. Sweeping it since: **0.70 scores better on every metric** (F1 0.903 vs 0.887) and adds no new false positives. Not changed yet — it is a one-line change, but it should go in alongside the other accuracy fixes rather than on its own. Note that a threshold is only meaningful for one embedding model; `w600k_mbf` needs its own (0.60 on the same corpus).
 
 The client can pass a custom threshold via the `?threshold=` query parameter.
 
@@ -561,7 +568,9 @@ Chronological record of changes made after the initial build, with the reasoning
 
 **Problem raised:** upload + face matching felt slow end-to-end; needed concrete options before picking one.
 
-**1. Downscale images before inference.** Phone photos are commonly 3000-4000px on the long side (test photos: 4096×1842, 3280×2460), but detection/embedding networks don't need that resolution — cost scales roughly with pixel count. `_load_resized_image()` in `services/face_matcher.py` shrinks each image to a configurable ceiling before it reaches the model — `SELFIE_MAX_DIMENSION` (1024, one image/job, accuracy matters most) and `EVENT_PHOTO_MAX_DIMENSION` (800, many images/job, speed matters most). **Measured** (4 real photos, opencv detector): 2.73s/photo full-res → 0.26s/photo resized = **10.48x**. Extrapolated: a 100-photo album's detection time drops from ~4.5min to ~26s. Measured on a dev machine whose TF build isn't using AVX2/FMA, so treat absolute seconds as machine-specific and the ratio as reliable — reproduce with `scripts/benchmark_downscale.py`. **Status: done.** No accuracy tradeoff expected (well above the ~150px minimum for reliable embeddings), no new dependency, no architectural change.
+**1. Downscale images before inference.** Phone photos are commonly 3000-4000px on the long side (test photos: 4096×1842, 3280×2460), but detection/embedding networks don't need that resolution — cost scales roughly with pixel count. `_load_resized_image()` in `services/face_matcher.py` shrinks each image to a configurable ceiling before it reaches the model — `SELFIE_MAX_DIMENSION` (1024, one image/job, accuracy matters most) and `EVENT_PHOTO_MAX_DIMENSION` (800, many images/job, speed matters most). **Measured** (4 real photos, opencv detector): 2.73s/photo full-res → 0.26s/photo resized = **10.48x**. Extrapolated: a 100-photo album's detection time drops from ~4.5min to ~26s. Measured on a dev machine whose TF build isn't using AVX2/FMA, so treat absolute seconds as machine-specific and the ratio as reliable — reproduced at the time with `scripts/benchmark_downscale.py`, since deleted (see 2026-09-03 below). **Status: done.** No accuracy tradeoff expected (well above the ~150px minimum for reliable embeddings), no new dependency, no architectural change.
+
+> **Corrected 2026-09-09.** "No accuracy tradeoff expected" was an assumption, and it was wrong. Cropping from the downscaled image was costing real recall — an 18px face is below the point where the embedder discriminates at all. The *downscale* was right; using it as the crop source was not. Fixed by `CROP_FROM_ORIGINAL`: detect on the small copy, crop from the original, keeping the speed win without the accuracy cost.
 
 **2. Bug found while benchmarking: broken opencv-python install.** `DeepFace.represent(..., detector_backend="opencv")` failed with `cv2 has no attribute 'CascadeClassifier'` — the unpinned `opencv-python` had resolved to `5.0.0.93`, whose Windows wheel ships without the Haar cascade data or `objdetect` bindings at all. **Event-photo face detection was completely non-functional** before this fix, independent of the downscaling work. Fixed by pinning `opencv-python==4.10.0.84`. **Status: done.** Worth remembering: unpinned ML/CV dependencies are a real production risk — a transitive bump silently broke a core path with zero code change on our side, found only because we benchmarked instead of assuming it worked.
 
@@ -867,6 +876,64 @@ is what actually happened to each item):
 
 **Status:** this is what surfaced the downscale bug; the fix is described below. Current numbers in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md).
 
+### 2026-09-24 — Scored `w600k_mbf` against the real photos, not just the synthetic corpus
+
+**Gap found:** `compare_embedders.py` filtered to `source == "synthetic"`, so the two embedders had never been compared on the real phone photos. The real photos *were* being scored — `evaluate_corpus.py` includes them — but only through the API, which means only with production's embedder. So: real photos scored by the incumbent, both models compared on LFW composites, and the two never intersected. The claim "mbf is better" rested entirely on synthetic data.
+
+The filter had a reason (`the comparison is reported per face size, and real photos have no known face size to bucket by`), but that is an argument for excluding them from the face-size *table*, not from the comparison. `evaluate_corpus.py` already had the pattern: split `synthetic` / `real_ok` / `real_amb` and report each separately.
+
+**What we did:** dropped the filter and report the two populations separately, never pooled. The synthetic corpus keeps every metric and picks each model's threshold — it is the only set with negatives. The real photos are all-positive, so they get **recall only**, with precision explicitly marked undefined rather than printed as a vacuous 1.000. Thresholds are still chosen on synthetic and then *applied* to the real set, so nothing is tuned on the test data. `compare_embedders.py` calls the embedders directly rather than through the API, so none of this touches production.
+
+**Result — the strongest number in the whole comparison.** Pushing each model's threshold out until it recovers all eight real photos, then charging it for the false positives that creates back on the labelled corpus:
+
+| Model | Real at its own threshold | Threshold for 8/8 real | Synthetic precision there | Synthetic FP there |
+|---|---|---|---|---|
+| DeepFace ArcFace | 6/8 (at 0.65) | 0.90 | 0.606 | **43** |
+| `w600k_mbf` | **7/8** (at 0.60) | **0.70** | **1.000** | **0** |
+
+`w600k_mbf` recovers every real photo at 0.70 while still making zero mistakes on the labelled corpus. ArcFace only reaches 8/8 by opening to 0.90, where precision collapses to 0.606 — it cannot find these photos and stay usable simultaneously. That is a materially stronger claim than the synthetic F1 gap (0.914 vs 0.887), which on its own looked marginal.
+
+Worth noting this also softens the earlier "swapping models does not fix small faces" conclusion. That remains true *on the synthetic corpus* — both models sit at 0.800 accuracy at 70px. On the real photos the gap is decisive anyway, which suggests the synthetic composites do not fully represent what makes the real photos hard.
+
+**Also corrected:** `benchmarks/README.md` still carried the superseded 15-pair numbers (`+0.118` separability gap, "separable at 0.74"). The 153-photo corpus overturned that — both models have a *negative* gap (−0.62 and −0.24). Replaced with a pointer to the generated `RESULTS.md` and a note recording the correction, since 15 pairs from one identity never supported the original claim.
+
+**Still not adopted.** Production runs DeepFace ArcFace. The migration work is unchanged: re-derive the threshold, wipe and recompute every cached `event_photos.embedding`, and replace mtcnn for a full TensorFlow removal.
+
+**Status:** done. Numbers in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md); published page updated.
+
+### 2026-09-24 (cont.) — Is DeepFace losing on merit, or because we call it wrong?
+
+**Question raised:** a 137 MB model losing to a 13.6 MB one is a strange result, and the big model is the one known to be misconfigured. So which is it — big models don't help on this data, or this particular one is being called wrong? Worth settling before building an architecture on the answer.
+
+**Two suspects**, both read out of the installed `deepface` source rather than recalled. Only one survived scrutiny:
+
+- **Scale — confirmed wrong.** `preprocessing.py:34`: `normalization="base"` returns the image untouched in `[0,1]`. ArcFace's own paper specifies `(x-127.5)/128` on `[0,255]`, which deepface ships as `normalization="ArcFace"` (`:66-71`). Production never passes the argument, so the model receives a pixel range it was not trained on.
+- **Colour order — suspicious, not confirmed.** First written up here as a definite bug; that was too strong. `representation.py:144` flips the input BGR→RGB and `:173` flips it back, so the model receives whatever order it was handed — and `:43` documents the expected input as **BGR**. deepface therefore feeds its own ArcFace weights BGR deliberately. Either that is a library-wide bug or those weights want BGR, and this repo has no way to tell. The sweep does not settle it: RGB is marginally better on the synthetic corpus, BGR better on the real photos, both by little.
+
+**Neither explains the loss.** Swept on the full corpus (`compare_embedders.py --diagnose-incumbent`):
+
+| config | thr | precision | recall | F1 | FP | real | all 8 at | FP there |
+|---|---|---|---|---|---|---|---|---|
+| **BGR + base (production)** | 0.65 | 0.955 | 0.829 | 0.887 | 3 | 6/8 | 0.90 | 43 |
+| RGB + base | 0.70 | 0.969 | 0.829 | 0.894 | 2 | 4/8 | 0.80 | 17 |
+| BGR + ArcFace | 0.70 | 0.955 | 0.829 | 0.887 | 3 | 6/8 | 0.85 | 22 |
+| RGB + ArcFace *(correct)* | 0.65 | **1.000** | 0.803 | 0.891 | **0** | 3/8 | 0.85 | 26 |
+| RGB + raw | 0.30 | 0.493 | 0.947 | 0.649 | 74 | 8/8 | 0.30 | 74 |
+| `w600k_mbf` | 0.60 | **1.000** | **0.842** | **0.914** | **0** | 7/8 | **0.70** | **0** |
+
+DeepFace's best across every configuration is **F1 0.894** against `w600k_mbf`'s **0.914**, and nothing it can be configured into recovers all eight real photos without paying heavily in false positives. **The model loses on merit.** The question is now closed: it is not a calling bug.
+
+**Two earlier claims this refutes, both recorded here rather than quietly edited away:**
+
+1. *"Production uses the worst of the four configurations, a live accuracy bug."* **Refuted.** That came from the 15-pair single-identity set. On the real corpus, production's BGR+base is mid-pack on synthetic and **joint-best on the real photos**.
+2. *"Fixing the configuration should help."* It makes real-photo recall **worse** — 6/8 down to 3/8 for the correct RGB+ArcFace.
+
+The second reads backwards until you look at the FP column next to it. The sloppy configuration compresses distances, so everything matches more readily; on an all-positive set that looks like better recall, and on the mixed corpus it surfaces as 3 false positives. RGB+ArcFace is the conservative, correct one — precision 1.000, zero false positives, lower recall. **A better score on an all-positive set is not evidence of a better model**, which is the whole reason the real photos are never reported on their own.
+
+**Consequence for the architecture question:** the server has no hidden quality advantage waiting to be unlocked by a config fix. If the server is to beat the phone on accuracy it needs a genuinely stronger model — `w600k_r50` from the `buffalo_l` pack is the obvious candidate, and it runs through the same ONNX path as `w600k_mbf`, so it carries none of DeepFace's configuration risk. Untested so far.
+
+**Status:** measured, wired into `compare_embedders.py` behind `--diagnose-incumbent`, nothing changed in production.
+
 ### Idea, largely answered 2026-09-09 — drop DeepFace/TensorFlow entirely for event photos
 
 Raised 2026-09-01, deliberately not implemented yet. The insightface `buffalo_sc` pack already downloaded for detection also ships its own ArcFace-trained embedding model (`w600k_mbf.onnx`, MobileFaceNet architecture) — visible in the pack's own load log, currently ignored (`allowed_modules=["detection"]`) in favor of routing crops back to DeepFace's ArcFace. Using it instead would let event photos skip TensorFlow entirely (detection + embedding both on ONNX Runtime), plausibly with a similar speedup to the one already measured for detection.
@@ -884,9 +951,22 @@ Raised 2026-09-01, deliberately not implemented yet. The insightface `buffalo_sc
 
 This backend is one half of SnapFind AI — the Android client lives in `../SnapFindAI/` (its own README covers the app side). Tracking both projects' open items here since the reasoning behind them is shared:
 
-1. **Backend performance** — in progress. Downscaling + horizontal worker scaling done; the event-photo detector went through a full opencv→retinaface→insightface cycle (see Work log) and is now both correct and fast. Larger-scale accuracy validation is now done too — a labelled corpus built from LFW gives precision/recall against known answers, broken down by face size. Still open: GPU inference, batch inference.
+1. **Backend performance and accuracy** — in progress. Downscaling + horizontal worker scaling done; the event-photo detector went through a full opencv→retinaface→insightface cycle (see Work log) and is now both correct and fast. Larger-scale accuracy validation is done too — a labelled corpus built from LFW gives precision/recall against known answers, broken down by face size. Three measured accuracy bugs are fixed (two-stage crop, `det_size` decoupling, all-faces scoring). **Still open, in priority order:** (a) adopt `w600k_mbf` — measured better on every axis including the real photos, blocked only on migration work; (b) the selfie path, which is untouched since the MVP and is now the weakest link — it downscales to 1024px, detects with mtcnn, and takes `result[0]` with no face selection, and it never got the crop-from-original fix the event path did; (c) raise the threshold 0.68 → 0.70, worth F1 0.887 → 0.903 for a one-line change; (d) detection at small face sizes, still the largest single source of misses; (e) GPU inference, batch inference.
 2. **Android client — currently broken against this backend.** `SnapFindApi.kt` still calls `POST jobs/upload`, which the object-storage migration removed. The app needs the new four-step flow (`upload/init` → presigned PUTs → `upload/complete` → `process`) before it can upload anything at all. Separately, the UI is still a bare-bones MVP (two buttons + a spinner) and needs a redesign that reads as portfolio-quality.
-3. **On-device / hybrid matching** — ~~found infeasible (model size + corpus size vs phone RAM/battery budget)~~ **that conclusion was wrong and is retracted as of 2026-09-09.** It was never measured, and both stated reasons fail against the actual files: the full on-device stack is `det_500m.onnx` (2.5 MB, already in production) plus `w600k_mbf.onnx` (13.6 MB) = **16 MB**, not the 137 MB TensorFlow ArcFace the size argument was reasoning about; and matching cost is dominated by embedding, which measured **15.6 ms/face single-threaded** — a 500-photo archive projects to under a minute per core on this machine. See the 2026-09-09 work log entry. Next step is an on-device timing harness (the one number this repo genuinely cannot produce: sustained throughput on real phone hardware, with thermal throttling over a full 500-photo batch). Still sequenced after backend performance work.
+3. **On-device / hybrid matching** — ~~found infeasible (model size + corpus size vs phone RAM/battery budget)~~ **that conclusion was wrong and is retracted as of 2026-09-09.** It was never measured, and both stated reasons fail against the actual files: the full on-device stack is `det_500m.onnx` (2.5 MB, already in production) plus `w600k_mbf.onnx` (13.6 MB) = **16 MB**, not the 137 MB TensorFlow ArcFace the size argument was reasoning about; and matching cost is dominated by embedding, which measured **15.6 ms/face single-threaded** — a 500-photo archive projects to under a minute per core on this machine. See the 2026-09-09 work log entry.
+
+**Where this stands: the model-quality half is answered, the device half is untouched.**
+
+Answered, on this machine, in Python — which was the right place to answer it, since the backend is the only trustworthy reference to compare against:
+- `w600k_mbf` beats the incumbent on the labelled corpus *and* on the real photos (8/8 at 0.70 with zero false positives; ArcFace needs 0.90 and produces 43). See the 2026-09-24 entry.
+- The ONNX path is verified bit-identical to insightface's own reference (`0.00000000`), so the preprocessing is right.
+- 16 MB of models total, versus 137 MB for the TensorFlow ArcFace that cannot ship at all.
+
+Not answered, and not answerable from this repo:
+- **Nothing has run on a phone.** Every timing is desktop CPU. Sustained throughput with thermal throttling across a 500-photo batch, plus full-size JPEG decode, is the one number only an Android harness can produce.
+- **Only the embedder has been swapped.** The on-device stack is `det_500m` *plus* `w600k_mbf`, and SCRFD has never been exercised through a mobile ONNX runtime. On Android there is no `insightface` package, so anchor generation, `distance2bbox`, NMS, keypoint decode and `norm_crop` all need reimplementing — that is the real engineering work, and none of it is written.
+
+Next step is the Android timing harness, which closes both. Still sequenced after the backend accuracy work above.
 4. **Resume claims gap-check** — compared the resume's project bullets against actual repo state. True today: FastAPI, Python, face embeddings, REST API count (7 job endpoints plus a health check). The "25-30% improvement via preprocessing" claim now has real, measured backing — image downscaling + the detector swap together are a documented, reproducible speedup, not a guess. **Docker, PostgreSQL, and vector similarity search (pgvector) are now also true** — containerized, run and verified end-to-end against a live Postgres container with a real `vector(512)` column, not just written and hoped-for (see the Docker + PostgreSQL section and the pgvector Work log entry above). Still not yet true / roadmap-only: Google Drive ingestion, the "90%+" manual-effort-reduction number (still needs its own benchmark, unrelated to inference speed). **Decided 2026-09-02: not pursuing the 1000+ photo batch claim as engineering work.** 500 (the current `MAX_EVENT_PHOTOS` default) is already realistic for the actual use case (event/wedding albums rarely exceed a few hundred photos), and stress-testing to 1000+ would only have been to hit that specific resume number, not a real product need — cheaper and more honest to adjust the resume wording to "500+" than to build and validate for a scale the product doesn't actually need.
 
 ## Interview cheat-sheet
@@ -897,6 +977,12 @@ On storage: "Photos are not on the API's disk. A local directory only works whil
 
 On reliability: "The database is the source of truth for job state. Atomic SQL updates prevent duplicate workers from processing the same job. Timestamps like `queued_at` and `processing_started_at` allow stale jobs to be retried, so a crash does not leave a job stuck in progress forever."
 
-On the performance pass: "I measured before optimizing instead of guessing — wrote a benchmark script, found a 10x speedup was available just from downscaling images before inference, and in the process of benchmarking caught a broken dependency pin that had silently disabled event-photo face detection entirely."
+On the performance pass: "I measured before optimizing instead of guessing — wrote a benchmark script, found a 10x speedup was available just from downscaling images before inference, and in the process of benchmarking caught a broken dependency pin that had silently disabled event-photo face detection entirely. What I'd add now is that I wrote 'no accuracy tradeoff expected' in the notes and didn't test it — and that turned out to be wrong. The downscale was fine for *detection* but I was also cropping from the downscaled image, so faces reached the embedder at 18 pixels. The fix keeps the speed win: detect on the small copy, crop from the original."
+
+On measuring accuracy: "The honest problem with a face matcher is that you can't tell a miss from a correct rejection without labels, and I didn't have any. So I built a corpus — composited 10 LFW identities onto phone-sized canvases at controlled face sizes, which gives known answers *and* an axis to break results down by. The labels live in the filenames rather than a separate ground-truth file, so they can't drift out of sync with the images. That immediately showed face size is the dominant variable: 0.968 accuracy at 160px, 0.800 at 70px. I keep the synthetic corpus and my own real photos scored separately and never averaged — the real set is all-positive, so it measures recall and physically cannot measure precision, and pooling them would have quietly inflated the headline number."
+
+On comparing two models: "Two things before trusting any comparison. First, prove your own code runs the challenger correctly — I checked my ONNX path against the library's own reference implementation on identical input and required cosine distance ~0, because ML preprocessing fails silently: wrong pixel scaling still returns a confident, correctly-shaped, meaningless vector. Second, give the incumbent its best configuration — I found production was calling DeepFace with the worst of four possible colour/normalization combinations, which is a bug worth more than the benchmark that surfaced it. Then I framed the result as a cost: push each model's threshold out until it recovers every real photo, and charge it for the false positives that creates. The mobile model got all eight at 0.70 with zero false positives; the incumbent needed 0.90 and produced 43."
+
+On being wrong: "I flagged a suspicious number — two different photos scoring 0.0066 apart — and then explained it with a guess, twice, and was wrong both times. What settled it was a controlled test that varied one thing at a time: same face, only the crop resolution changing. That showed the embedder was collapsing small faces together regardless of identity, rating two *different* people at 0.0241 against a 0.68 threshold. I keep the wrong intermediate conclusions in the work log, because the useful lesson is that a real anomaly plus a plausible story is still not evidence."
 
 On the detector swap: "When I found a fast detector was actually failing silently, I didn't just swap in whatever detector was slowest-but-safest — I tested a genuinely lightweight modern detector (SCRFD, same class as MobileNet-based RetinaFace) but specifically validated the accuracy risk before trusting it: I compared the embeddings it produced against the known-good pipeline's embeddings for the same photos, not just whether it 'detected a face.' That caught that alignment quality was preserved before I shipped it, instead of assuming a paper's speed number would translate directly to my setup."

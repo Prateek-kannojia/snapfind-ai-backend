@@ -96,57 +96,74 @@ Reads the corpus in `benchmarks/sample_test_data/`; build it with `build_corpus.
 
 ### Results
 
-**Speed** — same crops, same machine, CPU:
+**Speed** — embed time for the whole corpus is in [`RESULTS.md`](RESULTS.md), regenerated on each run; the ratio has held around **30–40× in `w600k_mbf`'s favour** across runs, at one tenth the model size. Detection and alignment are shared and unchanged, so they cancel out of the comparison.
 
-| | DeepFace ArcFace | `w600k_mbf` | Speedup |
+All CPU, on this dev machine. **Nothing has been measured on a phone** — see the caveats below.
+
+**Accuracy** — live numbers are in [`RESULTS.md`](RESULTS.md); the script rewrites them on every run. Two populations, scored separately and never averaged:
+
+- **Synthetic corpus** — labelled positives *and* negatives, so precision, F1 and the face-size breakdown are all defined. This is what picks each model's threshold.
+- **Real photos** — the actual product input and the harder case. All-positive, so **recall only**; precision is undefined there and would read 1.000 by construction.
+
+The headline is the interaction between the two. Pushing the threshold out until a model recovers every real photo, then asking what that costs back on the labelled corpus:
+
+| Model | Threshold for 8/8 real | Synthetic precision there | Synthetic FP there |
 |---|---|---|---|
-| Embedding, all threads | 271 ms | **6.5 ms** | 41x |
-| Embedding, 1 thread | 271 ms | **15.6 ms** | 17x |
+| DeepFace ArcFace | 0.90 | 0.606 | **43** |
+| **`w600k_mbf`** | **0.70** | **1.000** | **0** |
 
-Detection and alignment (shared, unchanged) add ~40-80 ms/photo. A 500-photo archive projects to well under a minute on one core of this machine.
+`w600k_mbf` recovers all eight real photos while still making zero mistakes on the labelled corpus. ArcFace can only get there by going so wide it produces 43 false positives — it cannot find these photos and stay usable at the same time.
 
-**Accuracy** — 15 labelled pairs from 6 faces, one identity plus one bystander. A threshold only exists if the worst same-person pair scores closer than the best different-person pair:
+> An earlier version of this section reported a **+0.118 separability gap** for `w600k_mbf` from 15 pairs of a single identity. The 153-photo corpus overturned it: both models have a *negative* gap (−0.62 and −0.24). `w600k_mbf` still wins, but it does not separate cleanly, and no threshold is perfect for either. Left here because the correction is the point — 15 pairs from one person was never enough to support that claim.
 
-| Embedder | Worst SAME | Best DIFFERENT | Gap | Verdict |
-|---|---|---|---|---|
-| DeepFace ArcFace | 0.9429 | 0.1375 | **−0.805** | no threshold separates these |
-| **`w600k_mbf`** | 0.6788 | 0.7968 | **+0.118** | separable, e.g. **0.74** |
+### Is the incumbent losing on merit, or because it's called wrong?
 
-`w600k_mbf` classifies all 15 pairs correctly at 0.74. DeepFace scores two *different* people at 0.1375 while scoring the *same* person at 0.9429 — the ranges overlap completely, so no threshold works.
+```powershell
+venv\Scripts\python.exe benchmarks\compare_embedders.py --diagnose-incumbent
+```
 
-Before blaming the model, the incumbent was given its best configuration — production passes BGR crops with default normalization, and both are plausible bugs:
+Two suspects, both read out of the installed `deepface` source rather than recalled. Only one is confirmed:
 
-| Colour order | `normalization` | Gap |
+- **Scale — confirmed wrong.** `preprocessing.py:34`: `normalization="base"` returns the image untouched in `[0,1]`. ArcFace's own paper specifies `(x-127.5)/128` on `[0,255]`, which deepface ships as `normalization="ArcFace"` (`:66-71`). Production never passes the argument, so the model receives a pixel range it was not trained on.
+- **Colour order — suspicious, not confirmed.** `representation.py:144` flips the input BGR→RGB, then `:173` flips it back, so the model receives whatever order it was handed — and `:43` documents the expected input as **BGR**. So deepface deliberately feeds its ArcFace weights BGR. Either that is a library-wide bug or those weights want BGR, and this repo cannot tell which. The sweep below doesn't settle it either: RGB is marginally better on the synthetic corpus, BGR is better on the real photos.
+
+**Neither explains the loss.** Swept on the full corpus:
+
+| config | thr | precision | recall | F1 | FP | real | all 8 at | FP there |
+|---|---|---|---|---|---|---|---|---|
+| **BGR + base (production)** | 0.65 | 0.955 | 0.829 | 0.887 | 3 | 6/8 | 0.90 | 43 |
+| RGB + base | 0.70 | 0.969 | 0.829 | 0.894 | 2 | 4/8 | 0.80 | 17 |
+| BGR + ArcFace | 0.70 | 0.955 | 0.829 | 0.887 | 3 | 6/8 | 0.85 | 22 |
+| RGB + ArcFace *(correct)* | 0.65 | **1.000** | 0.803 | 0.891 | **0** | 3/8 | 0.85 | 26 |
+| RGB + raw | 0.30 | 0.493 | 0.947 | 0.649 | 74 | 8/8 | 0.30 | 74 |
+| **`w600k_mbf`** | 0.60 | **1.000** | **0.842** | **0.914** | **0** | 7/8 | **0.70** | **0** |
+
+The best DeepFace can manage in any configuration is **F1 0.894**, against `w600k_mbf`'s **0.914** — and no configuration comes close to recovering all eight real photos at zero cost. **DeepFace loses on merit.**
+
+**Two corrections this forced, both to claims made here earlier:**
+
+1. *"Production uses the worst of the four configurations"* — **refuted.** That came from the 15-pair set. On the real corpus, production's BGR+base is mid-pack on synthetic and **joint-best on the real photos**.
+2. Fixing the configuration makes real-photo recall **worse**, not better (6/8 → 3/8 for the correct RGB+ArcFace).
+
+That second one looks backwards until you read it alongside the FP column. The sloppy configuration compresses distances, so everything matches more readily — on an all-positive set that reads as better recall, and on the mixed corpus it shows up as 3 false positives. RGB+ArcFace is the *conservative* and correct one: precision 1.000, zero false positives, lower recall. **A better score on an all-positive set is not evidence of a better model**, which is exactly why the real photos are never reported alone.
+
+### Two bugs this turned up — both since fixed
+
+| Bug | Then | Now |
 |---|---|---|
-| **BGR (production)** | **`base` (production)** | **−0.805** |
-| BGR | `ArcFace` | −0.616 |
-| RGB | `base` | −0.311 |
-| RGB | `ArcFace` | −0.042 |
+| **The 800px downscale destroyed small faces.** Faces arrived at 318 / 835 / 755 px² (≈18×18 to 29×29) because crops were taken from the downscaled image | A 90px face in a 4000px photo became an 18px face | **Fixed.** `CROP_FROM_ORIGINAL=true` — detect on the downscale (cheap), crop from the original (detailed) |
+| **Largest-face-only picked the wrong person.** One sample photo holds two people; the bystander's face was 8250 px² against the target's 7770 px² — 6% larger, so `max(faces, key=area)` scored the wrong one, and which face won flipped with resolution | Target unreachable in that photo | **Fixed.** Every detected face is scored; the closest wins |
 
-DeepFace fails in all four, but **production happens to use the worst one**. That's a live accuracy bug in `services/face_matcher.py`, independent of anything on-device.
-
-### Two other things this turned up
-
-**The 800px downscale destroys small faces.** `event_photo_max_dimension=800` turns a 90px face in a 4000px photo into an 18px face:
-
-| Photo | face at 800px | face at 4000px |
-|---|---|---|
-| P1 | 318 px² (~18×18) | 8250 px² |
-| P2 | 835 px² | 19504 px² |
-| P3 | 755 px² | 18375 px² |
-
-Raising it improves `w600k_mbf` materially (P2: 0.674 → 0.561) and DeepFace barely at all. The 10x speedup from downscaling was measured; its recall cost never was.
-
-**Largest-face-only picks the wrong person.** P1 contains two people. The bystander's face is 8250 px²; the target's is 7770 px² — 6% smaller. `max(faces, key=area)` ([`face_matcher.py:174`](../services/face_matcher.py)) therefore scores the wrong person, and which one wins flips with resolution.
+A third bug from the same round — `det_size` being driven by `event_photo_max_dimension`, so raising the downscale also broke detection — is fixed too: `FACE_DETECTOR_SIZE` is now its own setting, pinned at 800.
 
 ### Caveats
 
-- **One identity and two different-person pairs.** Enough to show a direction, nowhere near enough to trust 0.74 as a number.
-- All photos from a single person on a single trip — one outfit, one hairstyle, similar lighting. No age, ethnicity, or lighting diversity, which is where face models usually fail.
-- Timings are this dev machine's CPU, not a phone: no thermal throttling, no full-size JPEG decode, different instruction set.
-- Nothing in the production pipeline was changed.
-
----
+- **Eight real photos, one identity.** They carry the weight of the headline claim, and eight is not many. The synthetic corpus supplies the scale (153 photos, 10 identities) but is LFW composites, not phone photos.
+- The real photos are one person on one trip — one outfit, one hairstyle, similar lighting. No age, ethnicity or lighting diversity, which is where face models usually fail.
+- The real set is all-positive, so it cannot measure false positives at all. Every precision figure quoted here comes from the synthetic corpus.
+- Timings are this dev machine's CPU. **Nothing has run on a phone** — no thermal throttling, no full-size JPEG decode, different instruction set. The "runs on Android" row above is an inference from the file format, not a measurement.
+- Only the *embedder* has been swapped in these runs. SCRFD detection has never been exercised through a mobile ONNX runtime.
+- Nothing in the production pipeline was changed by this script — it calls the embedders directly rather than through the API.
 
 ---
 
@@ -201,7 +218,9 @@ Failure mode: **false accepts on small faces, false rejects across a size gap.**
 
 ### The obvious fix would have broken production
 
-`face_matcher.py:45` drives the detector's input size from the same setting as the downscale:
+> **Since fixed.** `FACE_DETECTOR_SIZE` is now its own setting, pinned at 800, and crops come from the original image. The code below is what it looked like at the time.
+
+At the time, `face_matcher.py` drove the detector's input size from the same setting as the downscale:
 
 ```python
 app.prepare(ctx_id=-1, det_size=(settings.event_photo_max_dimension,) * 2)
@@ -246,14 +265,15 @@ The same rule governs the Android port: running the *identical* `.onnx` on serve
 
 ## Files
 
-Four scripts. Each answers one question and writes its own section of
+Five scripts. Each answers one question; the measuring ones write their own section of
 [`RESULTS.md`](RESULTS.md), so they can be run separately and in any order.
 
 | script | question it answers |
 |---|---|
 | `build_corpus.py` | **Run first.** Composites 10 LFW identities into phone-sized canvases at controlled face sizes, writing them into `sample_test_data/` alongside the real jobs already there. Only the `job*` folders are regenerated — the real ones cannot be rebuilt, so they are never touched. |
-| `evaluate_corpus.py` | How accurate is the pipeline? Precision/recall/F1 against that ground truth, by face size, across a threshold sweep. |
-| `compare_embedders.py` | DeepFace ArcFace vs `w600k_mbf` on identical crops. Validates the ONNX port against insightface's own reference before trusting a single number. |
+| `seed_jobs.py` | **Run second.** Uploads every job through the real API — init, presigned PUTs, multipart zip, complete — so they exist as real rows in Postgres with photos in object storage. Wipes first by default (`--keep` to skip). Run once, or again after a database wipe; not part of a measurement run. |
+| `evaluate_corpus.py` | How accurate is the pipeline? Re-processes the seeded jobs and scores what `/matches` returns — precision/recall/F1 by face size, across a threshold sweep. Uploads nothing. |
+| `compare_embedders.py` | DeepFace ArcFace vs `w600k_mbf` on identical crops, scoring **both** the synthetic corpus and the real photos. Validates the ONNX port against insightface's own reference before trusting a single number. Calls the embedders directly rather than through the API, so it compares any model without touching production. |
 | `detector_comparison.py` | Which detector, and what did the two rejected ones actually cost? opencv → retinaface → insightface, all on identical input. |
 
 `_common.py` holds what they share — job discovery, label parsing, scoring,

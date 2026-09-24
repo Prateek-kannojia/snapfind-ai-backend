@@ -64,13 +64,21 @@ identities, known answers) at the default 0.68 threshold: **precision 0.955,
 recall 0.829, F1 0.887**. Accuracy tracks face size closely — 0.968 at 160px,
 0.800 at 70px — which is the honest limit of the current pipeline.
 
+A 13.6 MB ONNX model (`w600k_mbf`, already on disk inside the detection pack)
+beats the 137 MB TensorFlow ArcFace currently in production. On the eight real
+phone photos it recovers **all eight at threshold 0.70 while still producing
+zero false positives** on the labelled corpus; ArcFace only reaches all eight at
+0.90, where precision collapses to 0.606 and it produces 43. **Measured, not
+adopted** — switching invalidates every cached embedding and needs the threshold
+re-derived, so it is migration work rather than a config change.
+
 ## Project structure
 
 ```
 Face_recognition/
 ├── main.py, worker.py            # FastAPI app, RQ worker
 ├── api/, core/, db/, services/   # routes, config/errors, ORM, business logic
-├── benchmarks/                   # labelled corpus + 4 reproducible measurements
+├── benchmarks/                   # corpus builder + seeder, 3 reproducible measurements
 ├── Dockerfile, docker-compose.yml
 └── DEEP_DIVE.md                  # full pipeline explanation + dated work log
 ```
