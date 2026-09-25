@@ -5,9 +5,11 @@ the others untouched, so they can be run independently and in any order.
 """
 from __future__ import annotations
 
+import csv
 import math
 import re
 import sys
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -105,19 +107,76 @@ def seeded_job_ids() -> dict[str, str]:
     return {Path(name).stem: job_id for name, job_id in rows}
 
 
+def wipe_cached_embeddings() -> None:
+    """Clear EventPhoto.embedding for every seeded photo.
+
+    build_matches_for_job() caches each photo's winning embedding and reuses
+    it on the next /process call (services/face_matcher.py:251-253) — fine
+    for production, but it means re-processing the same job under a
+    different SELFIE_DETECTOR_MODE/EMBEDDER would silently score the
+    PREVIOUS config's embeddings. Call this between sweep configs.
+    """
+    from sqlalchemy import create_engine, text
+
+    from core.settings import settings
+
+    engine = create_engine(settings.database_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE event_photos SET embedding = NULL"))
+    finally:
+        engine.dispose()
+
+
+def _record(job: dict, filename: str, d: float | None) -> dict:
+    """One scored photo, in the shape every scorer and both real pipelines
+    (backend, on-device) agree on. The only thing that differs between
+    sources is how `d` was obtained — this is what stays common."""
+    truth, face_px = label_from(filename)
+    if truth is None:
+        truth = job["all_positive"]
+    return {"job": job["name"], "source": job["source"],
+            "ambiguous": job["ambiguous"], "truth": truth,
+            "face_px": face_px, "file": filename, "d": d}
+
+
 def records_for(job: dict, distance_of) -> list[dict]:
-    """Score one job's photos. `distance_of(selfie, photo_path)` returns the
-    cosine distance, or None when no face was found."""
-    out = []
-    for ph in job["photos"]:
-        truth, face_px = label_from(ph.name)
-        if truth is None:
-            truth = job["all_positive"]
-        out.append({"job": job["name"], "source": job["source"],
-                    "ambiguous": job["ambiguous"], "truth": truth,
-                    "face_px": face_px, "file": ph.name,
-                    "d": distance_of(job, ph)})
-    return out
+    """Score one job's photos by calling in-process. `distance_of(job, photo_path)`
+    returns the cosine distance, or None when no face was found. Use this when
+    the pipeline can be called directly, e.g. a local ONNX session."""
+    return [_record(job, ph.name, distance_of(job, ph)) for ph in job["photos"]]
+
+
+def records_from_distances(job: dict, distances: dict[str, float | None]) -> list[dict]:
+    """Score one job's photos from precomputed distances, keyed by filename.
+
+    For sources that cannot be called in-process from this script — the live
+    API (`{m["filename"]: m["match_distance"]}` from /jobs/{id}/matches) and,
+    once it exists, an on-device run (a CSV pulled off the phone: job,file,d).
+    A filename missing from `distances` scores as "no match" (d=None), same
+    as a face that was never found.
+    """
+    return [_record(job, ph.name, distances.get(ph.name)) for ph in job["photos"]]
+
+
+def load_device_distances(csv_path: Path) -> dict[str, dict[str, float | None]]:
+    """Read an on-device export: columns job,file,d (d blank = no match).
+
+    This is the contract for step 3/4's Android run: compute distances on
+    the phone, export this CSV, `adb pull` it, and score it with the exact
+    same records_from_distances()/score() as the backend and desktop
+    numbers — one scoring path for all three sources, nothing to reconcile.
+    Grouped by job name so a caller can do:
+        by_job = load_device_distances(path)
+        for job in jobs:
+            records += records_from_distances(job, by_job.get(job["name"], {}))
+    """
+    out: dict[str, dict[str, float | None]] = defaultdict(dict)
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            d = float(row["d"]) if row.get("d") not in (None, "") else None
+            out[row["job"]][row["file"]] = d
+    return dict(out)
 
 
 def p(msg: str = "") -> None:
