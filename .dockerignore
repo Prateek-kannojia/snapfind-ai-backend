@@ -1,13 +1,16 @@
 # Local virtual environment — the image installs its own dependencies.
 venv/
 
-# Runtime data: uploaded photos, cached model weights, the SQLite dev DB.
-# These become Docker volumes at runtime instead of being baked into the
-# image — see docker-compose.yml.
-storage/uploads/
-storage/deepface/
-storage/insightface/
+# Runtime data: cached model weights, the SQLite dev DB. These become
+# Docker volumes at runtime instead of being baked into the image — see
+# docker-compose.yml. (Renamed from storage/ to models/ — see commit
+# "Rename the weights directory from storage/ to models/".)
+models/
 app.db
+
+# Benchmark fixtures — real+synthetic test photos, never needed inside the
+# image. See benchmarks/README.md.
+benchmarks/sample_test_data/
 
 # Nested git repo (this backend has its own history separate from the
 # outer project) and editor/OS noise.
