@@ -1,13 +1,13 @@
-<title>SnapFind Match Accuracy</title>
+<title>Choosing SnapFind's Models</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
 <style>
   :root{
-    --ground:#F6F8F7; --surface:#FFFFFF; --surface-2:#EDF1F0;
-    --ink:#141A1B; --muted:#59666A; --faint:#8A9A9C;
-    --line:#DCE4E3; --line-strong:#C3CFCE;
-    --accent:#0B6E5F; --accent-soft:#DCEDE9;
-    --warn:#C8811F; --warn-soft:#F7EBD8;
-    --bad:#A33A34; --bad-soft:#F6E2E0;
+    --ground:#F5F7F6; --surface:#FFFFFF; --surface-2:#ECF1EF;
+    --ink:#141C1B; --muted:#586A67; --faint:#8A9C99;
+    --line:#DCE6E3; --line-strong:#C3D0CD;
+    --accent:#0E7C6B; --accent-soft:#DCEEE9; --accent-strong:#0B5C4F;
+    --warn:#B8631B; --warn-soft:#F6E7D6;
+    --bad:#A83B33; --bad-soft:#F5E1DE;
     --shadow:0 1px 2px rgba(20,26,27,.05), 0 8px 24px -16px rgba(20,26,27,.28);
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
     --sans:"Archivo",system-ui,-apple-system,Segoe UI,sans-serif;
@@ -15,32 +15,34 @@
   }
   @media (prefers-color-scheme:dark){
     :root:not([data-theme="light"]){
-      --ground:#0E1415; --surface:#161E1F; --surface-2:#1D2728;
-      --ink:#E6EDEC; --muted:#9DACAE; --faint:#7A8A8C;
-      --line:#26312F; --line-strong:#35423F;
-      --accent:#4FC5AC; --accent-soft:#12312B;
-      --warn:#E5A951; --warn-soft:#332715;
-      --bad:#E2726B; --bad-soft:#331C1B;
+      --ground:#0F1514; --surface:#171F1E; --surface-2:#1E2827;
+      --ink:#E7EEEC; --muted:#9FB0AD; --faint:#77908C;
+      --line:#283432; --line-strong:#374542;
+      --accent:#4FC7AE; --accent-soft:#123129; --accent-strong:#6FDAC3;
+      --warn:#E5A759; --warn-soft:#332714;
+      --bad:#E1786F; --bad-soft:#331E1B;
       --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
     }
   }
   :root[data-theme="dark"]{
-    --ground:#0E1415; --surface:#161E1F; --surface-2:#1D2728;
-    --ink:#E6EDEC; --muted:#9DACAE; --faint:#7A8A8C;
-    --line:#26312F; --line-strong:#35423F;
-    --accent:#4FC5AC; --accent-soft:#12312B;
-    --warn:#E5A951; --warn-soft:#332715;
-    --bad:#E2726B; --bad-soft:#331C1B;
+    --ground:#0F1514; --surface:#171F1E; --surface-2:#1E2827;
+    --ink:#E7EEEC; --muted:#9FB0AD; --faint:#77908C;
+    --line:#283432; --line-strong:#374542;
+    --accent:#4FC7AE; --accent-soft:#123129; --accent-strong:#6FDAC3;
+    --warn:#E5A759; --warn-soft:#332714;
+    --bad:#E1786F; --bad-soft:#331E1B;
     --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
   }
 
   *{box-sizing:border-box}
   body{
     background:var(--ground); color:var(--ink);
-    font-family:var(--serif); font-size:17px; line-height:1.65;
+    font-family:var(--serif); font-size:17px; line-height:1.66;
     -webkit-font-smoothing:antialiased;
   }
   .wrap{max-width:1080px; margin:0 auto; padding:0 28px 96px}
+  a{color:var(--accent)}
+  a:focus-visible, button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
 
   /* ---------- masthead ---------- */
   header.mast{padding:56px 0 32px; border-bottom:2px solid var(--ink)}
@@ -50,18 +52,22 @@
     margin:0 0 14px;
   }
   h1{
-    font-family:var(--sans); font-weight:700; font-size:clamp(34px,5.2vw,52px);
-    line-height:1.05; letter-spacing:-.024em; margin:0 0 16px;
+    font-family:var(--sans); font-weight:700; font-size:clamp(32px,4.8vw,48px);
+    line-height:1.08; letter-spacing:-.022em; margin:0 0 16px;
     text-wrap:balance;
   }
-  .standfirst{
-    font-size:19px; color:var(--muted); margin:0; max-width:62ch;
-  }
+  .standfirst{font-size:19px; color:var(--muted); margin:0; max-width:66ch}
   .runmeta{
     display:flex; flex-wrap:wrap; gap:8px 28px; margin-top:26px;
     font-family:var(--mono); font-size:12px; color:var(--faint);
   }
   .runmeta b{color:var(--muted); font-weight:500}
+  .toc{
+    display:flex; flex-wrap:wrap; gap:8px 22px; margin-top:22px;
+    font-family:var(--sans); font-size:13.5px;
+  }
+  .toc a{color:var(--muted); text-decoration:none; border-bottom:1px solid var(--line-strong)}
+  .toc a:hover{color:var(--accent); border-color:var(--accent)}
 
   /* ---------- verdict strip ---------- */
   .verdict{
@@ -75,18 +81,17 @@
     text-transform:uppercase; color:var(--faint); margin:0 0 8px;
   }
   .stat .v{
-    font-family:var(--mono); font-weight:600; font-size:30px;
+    font-family:var(--mono); font-weight:600; font-size:28px;
     letter-spacing:-.02em; color:var(--ink); font-variant-numeric:tabular-nums;
     line-height:1;
   }
   .stat .v.pos{color:var(--accent)}
-  .stat .v.neg{color:var(--bad)}
   .stat .n{font-size:13px; color:var(--muted); margin:7px 0 0; font-family:var(--sans)}
 
   /* ---------- sections ---------- */
-  section{margin-top:60px; scroll-margin-top:20px}
+  section{margin-top:64px; scroll-margin-top:20px}
   h2{
-    font-family:var(--sans); font-weight:600; font-size:25px;
+    font-family:var(--sans); font-weight:600; font-size:26px;
     letter-spacing:-.017em; margin:0 0 6px; text-wrap:balance;
   }
   h2 .num{
@@ -94,12 +99,97 @@
     letter-spacing:.1em; display:block; margin-bottom:9px;
   }
   h3{
-    font-family:var(--sans); font-weight:600; font-size:16px;
-    letter-spacing:-.006em; margin:34px 0 10px;
+    font-family:var(--sans); font-weight:600; font-size:17px;
+    letter-spacing:-.006em; margin:36px 0 11px;
   }
-  .lede{color:var(--muted); max-width:66ch; margin:0 0 22px}
-  p{max-width:66ch}
-  a{color:var(--accent)}
+  .lede{color:var(--muted); max-width:68ch; margin:0 0 22px; font-size:18px}
+  p{max-width:68ch}
+  p + p{margin-top:16px}
+
+  /* ---------- pipeline explainer ---------- */
+  .pipeline{
+    display:grid; grid-template-columns:1fr auto 1fr auto 1fr; gap:0;
+    align-items:stretch; margin:30px 0; border:1px solid var(--line);
+    border-radius:4px; overflow:hidden; background:var(--surface);
+  }
+  .pstep{padding:22px 20px}
+  .pstep .k{
+    font-family:var(--mono); font-size:10px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 8px;
+  }
+  .pstep h4{font-family:var(--sans); font-size:16px; font-weight:600; margin:0 0 8px}
+  .pstep p{font-size:14px; color:var(--muted); margin:0; max-width:none}
+  .parrow{
+    display:flex; align-items:center; justify-content:center;
+    background:var(--surface-2); color:var(--faint); font-size:18px;
+    padding:0 6px;
+  }
+  @media(max-width:760px){
+    .pipeline{grid-template-columns:1fr}
+    .parrow{padding:8px 0; transform:rotate(90deg)}
+  }
+
+  /* ---------- three-tests comparison ---------- */
+  .tests{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:1px;
+    background:var(--line); border:1px solid var(--line); border-radius:4px;
+    overflow:hidden; margin:28px 0;
+  }
+  .test{background:var(--surface); padding:22px 18px}
+  .test.hero{background:var(--accent-soft)}
+  .test .name{font-family:var(--sans); font-size:15px; font-weight:600; margin:0 0 14px}
+  .test dl{margin:0; font-size:13.5px}
+  .test dt{
+    font-family:var(--mono); font-size:10px; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--faint); margin-top:12px;
+  }
+  .test dt:first-child{margin-top:0}
+  .test dd{margin:3px 0 0; color:var(--ink)}
+  @media(max-width:760px){.tests{grid-template-columns:1fr}}
+
+  /* ---------- progression stages ---------- */
+  .stages{
+    display:grid; grid-template-columns:repeat(4,1fr); gap:1px;
+    background:var(--line); border:1px solid var(--line); border-radius:4px;
+    overflow:hidden; margin:8px 0 6px;
+  }
+  .stage{background:var(--surface); padding:22px 18px 20px; position:relative}
+  .stage .idx{
+    font-family:var(--mono); font-size:10px; letter-spacing:.11em;
+    text-transform:uppercase; color:var(--faint);
+  }
+  .stage h4{
+    font-family:var(--sans); font-size:14.5px; font-weight:600;
+    margin:9px 0 16px; line-height:1.3; min-height:38px;
+  }
+  .stage .metric{
+    display:flex; justify-content:space-between; align-items:baseline;
+    font-family:var(--mono); font-size:12.5px; padding:4px 0;
+    border-top:1px solid var(--line); color:var(--muted);
+  }
+  .stage .metric:first-of-type{border-top:0}
+  .stage .metric b{color:var(--ink); font-weight:600; font-size:13.5px}
+  .stage .metric b.hl{color:var(--accent)}
+  .stage .delta{
+    margin-top:14px; font-family:var(--mono); font-size:11px;
+    color:var(--accent-strong); font-weight:600;
+  }
+  .stage .delta.flat{color:var(--faint); font-weight:500}
+  .stage.win{background:var(--accent-soft)}
+  @media(min-width:761px){
+    .stage:not(:last-child)::after{
+      content:"→"; position:absolute; right:-11px; top:50%; z-index:2;
+      transform:translateY(-50%); font-size:16px; color:var(--faint);
+      background:var(--ground); width:18px; text-align:center;
+    }
+  }
+  @media(max-width:760px){
+    .stages{grid-template-columns:1fr}
+    .stage:not(:last-child)::after{
+      content:"↓"; display:block; text-align:center; font-size:14px;
+      color:var(--faint); margin-top:14px;
+    }
+  }
 
   /* ---------- tables ---------- */
   .scroll{overflow-x:auto; border:1px solid var(--line); border-radius:3px; background:var(--surface)}
@@ -113,32 +203,10 @@
   }
   tbody tr{border-bottom:1px solid var(--line)}
   tbody tr:last-child{border-bottom:0}
-  tr.total{background:var(--surface-2); font-weight:600}
-  tr.total td{border-top:1px solid var(--line-strong)}
   td.dim{color:var(--faint)}
   .hl{color:var(--accent); font-weight:600}
   .hl-bad{color:var(--bad); font-weight:600}
-  .hl-warn{color:var(--warn); font-weight:600}
   tr.marked{background:var(--accent-soft)}
-
-  /* F1 bar inside a cell */
-  .bar{display:flex; align-items:center; gap:9px; justify-content:flex-end}
-  .bar .track{
-    width:64px; height:6px; border-radius:99px; background:var(--surface-2);
-    overflow:hidden; flex:none; border:1px solid var(--line);
-  }
-  .bar .fill{display:block; height:100%; background:var(--accent)}
-  .bar .fill.warn{background:var(--warn)}
-  .bar .fill.bad{background:var(--bad)}
-
-  .chip{
-    font-family:var(--mono); font-size:10px; letter-spacing:.07em;
-    text-transform:uppercase; padding:2.5px 7px; border-radius:2px;
-    border:1px solid transparent; font-weight:500;
-  }
-  .chip.ok{background:var(--accent-soft); color:var(--accent); border-color:var(--accent)}
-  .chip.mid{background:var(--warn-soft); color:var(--warn); border-color:var(--warn)}
-  .chip.bad{background:var(--bad-soft); color:var(--bad); border-color:var(--bad)}
 
   /* ---------- distance number line ---------- */
   .lines{display:flex; flex-direction:column; gap:26px; margin:26px 0 8px}
@@ -163,8 +231,6 @@
     position:absolute; top:50%; width:12px; height:12px; margin:-6px 0 0 -6px;
     border-radius:99px; background:var(--bad); border:2px solid var(--surface);
   }
-  .dot.hit{background:var(--accent)}
-  .dot.none{background:var(--faint)}
   .dlabel{
     position:absolute; top:calc(50% + 11px); transform:translateX(-50%);
     font-family:var(--mono); font-size:9.5px; color:var(--muted);
@@ -202,12 +268,12 @@
     padding:1.5px 5px; border-radius:2px; border:1px solid var(--line);
   }
   .cols{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:22px}
-  ul.tight{margin:0; padding-left:20px; max-width:64ch}
+  ul.tight{margin:0; padding-left:20px; max-width:66ch}
   ul.tight li{margin-bottom:9px}
   ul.tight li::marker{color:var(--accent)}
 
   footer{
-    margin-top:72px; padding-top:24px; border-top:1px solid var(--line);
+    margin-top:76px; padding-top:24px; border-top:1px solid var(--line);
     font-family:var(--mono); font-size:11.5px; color:var(--faint);
   }
   footer p{max-width:70ch; margin:0 0 8px}
@@ -222,195 +288,331 @@
 
 <header class="mast">
   <p class="eyebrow">SnapFind AI · Backend pipeline</p>
-  <h1>How accurate is the face matching?</h1>
+  <h1>Choosing what finds a face, and what recognizes one</h1>
   <p class="standfirst">
-    165 photos across 13 jobs, every one pushed through the running API — presigned
-    upload, worker extraction, the real matcher. No shortcuts around the pipeline.
+    Face matching is two separate machine-learning problems wearing one name — finding a
+    face, and telling faces apart. SnapFind tests them separately, then together, because
+    a combined test can tell you <em>which</em> setup wins without ever telling you
+    <em>why</em>. This is the full case: what each model does, why three different
+    comparisons were needed instead of one, and what all three found.
   </p>
   <div class="runmeta">
-    <span><b>Measured</b> 10 Sep 2026</span>
-    <span><b>Corpus</b> 153 synthetic (LFW) + 12 real</span>
-    <span><b>Threshold</b> 0.68</span>
+    <span><b>Measured</b> 25 Sep 2026</span>
+    <span><b>Corpus</b> 163 synthetic (LFW) + 15 real photos, 13 jobs</span>
+    <span><b>Path</b> real API, real Postgres, real worker, where noted</span>
     <span><b>Hardware</b> CPU only, no GPU</span>
   </div>
+  <nav class="toc">
+    <a href="#pipeline">The pipeline</a>
+    <a href="#why-three">Why three comparisons</a>
+    <a href="#detector">Detector</a>
+    <a href="#embedder">Embedder</a>
+    <a href="#sweep">End-to-end sweep</a>
+    <a href="#next">What's next</a>
+  </nav>
 </header>
 
 <div class="verdict">
   <div class="stat">
-    <p class="k">Precision</p>
-    <div class="v pos">0.957</div>
-    <p class="n">When it says match, it's right</p>
+    <p class="k">Winning config</p>
+    <div class="v pos" style="font-size:19px">SCRFD + mbf</div>
+    <p class="n">Same detector, both sides now</p>
   </div>
   <div class="stat">
-    <p class="k">Recall</p>
-    <div class="v neg">0.761</div>
-    <p class="n">It misses 21 of 88</p>
+    <p class="k">F1, best config</p>
+    <div class="v pos">0.959</div>
+    <p class="n">Up from 0.903 today</p>
   </div>
   <div class="stat">
-    <p class="k">F1</p>
-    <div class="v">0.848</div>
-    <p class="n">Whole pipeline, all 13 jobs</p>
+    <p class="k">False positives</p>
+    <div class="v pos">0</div>
+    <p class="n">Down from 3, same corpus</p>
   </div>
   <div class="stat">
-    <p class="k">Speed</p>
-    <div class="v">1.42<span style="font-size:15px;color:var(--muted)">s</span></div>
-    <p class="n">Per photo, detect → match</p>
+    <p class="k">Time, 13 jobs</p>
+    <div class="v pos">74s</div>
+    <p class="n">Down from 929s today</p>
   </div>
 </div>
 
-<section>
-  <h2><span class="num">FINDING 01</span>The pipeline is cautious, not careless</h2>
+<section id="pipeline">
+  <h2><span class="num">THE PIPELINE</span>Three steps, two different ML problems</h2>
   <p class="lede">
-    Precision 0.957 against recall 0.761 is a lopsided result, and the direction matters:
-    only <strong>3 false positives in 165 photos</strong>. It rarely shows you a stranger.
-    What it does instead is miss people — 21 photos where the target was present and
-    never surfaced.
-  </p>
-  <p>
-    For this product that's the better failure to have. A wrong face in someone's results
-    is worse than a missing one they can find by loosening the threshold. But recall is
-    where the remaining work is, and the cause is more specific than "the model is weak."
+    "Face matching" sounds like one model. It's three steps, and the first two are built
+    from completely different networks solving different problems — which is the reason
+    this page has three sets of results instead of one.
   </p>
 
-  <div class="note">
-    <span class="tag">The largest single cause</span>
-    <p>
-      <strong>25 of the 165 photos had no face detected at all.</strong> The embedder never
-      saw them, so no threshold could have rescued them. That is the biggest bucket of
-      failures by some distance — detection, not matching.
-    </p>
+  <div class="pipeline">
+    <div class="pstep">
+      <p class="k">Step 1 — Detect</p>
+      <h4>Where is a face?</h4>
+      <p>
+        A <strong>detector</strong> takes a whole photo and returns bounding boxes — one
+        per face, wherever they are. It has no idea whose face it is; it's a pure
+        "find the object" problem, the same family as detecting cars or street signs. SCRFD,
+        the model SnapFind uses, is a compact CNN trained specifically on faces.
+      </p>
+    </div>
+    <div class="parrow">→</div>
+    <div class="pstep">
+      <p class="k">Step 2 — Embed</p>
+      <h4>Turn a face into numbers</h4>
+      <p>
+        An <strong>embedder</strong> takes one cropped, aligned face and outputs a 512-number
+        vector — a point in space where faces of the same person land close together and
+        different people land far apart. This is the actual "recognition" model; ArcFace and
+        MobileFaceNet (below) are both embedders, trained differently, producing
+        incompatible spaces.
+      </p>
+    </div>
+    <div class="parrow">→</div>
+    <div class="pstep">
+      <p class="k">Step 3 — Compare</p>
+      <h4>Cosine distance</h4>
+      <p>
+        Two embeddings, one number: how far apart they point. Below a threshold counts as a
+        match. This step has no model at all — it's arithmetic — so every result on this
+        page ultimately comes down to how good steps 1 and 2 were.
+      </p>
+    </div>
   </div>
+
+  <p>
+    Detector and embedder are orthogonal failures. A great embedder fed a bad crop (the
+    wrong face, or a face cut off at the edge) produces a bad match — the embedder never
+    gets a fair shot. A weak embedder fed a perfect crop still confuses people who look
+    alike. Testing the whole pipeline at once can tell you the combination is wrong; it
+    can't tell you which half is responsible.
+  </p>
 </section>
 
-<section>
-  <h2><span class="num">FINDING 02</span>Face size decides almost everything</h2>
+<section id="why-three">
+  <h2><span class="num">METHOD</span>Why three comparisons, not one sweep</h2>
   <p class="lede">
-    The synthetic corpus varies one thing deliberately: how many pixels wide the target's
-    face is. Everything else — lighting, pose, background — is held constant. The result
-    is a clean gradient.
+    The most trustworthy test is the last one on this page — real photos through the real
+    API, real database, real worker. It's also the coarsest. It answers "which config wins"
+    without decomposing why, and it never re-tests some choices at all.
+  </p>
+
+  <div class="tests">
+    <div class="test">
+      <p class="name">Detector comparison</p>
+      <dl>
+        <dt>Varies</dt><dd>Detector: opencv, retinaface, SCRFD</dd>
+        <dt>Holds constant</dt><dd>Embedder (ArcFace, throughout)</dd>
+        <dt>Answers</dt><dd>Which model finds faces reliably and fast enough</dd>
+        <dt>Can't answer</dt><dd>Whether a better embedder changes the ranking</dd>
+      </dl>
+    </div>
+    <div class="test">
+      <p class="name">Embedder comparison</p>
+      <dl>
+        <dt>Varies</dt><dd>Embedder: DeepFace ArcFace, w600k_mbf</dd>
+        <dt>Holds constant</dt><dd>Detector (SCRFD), and the crops themselves</dd>
+        <dt>Answers</dt><dd>Which model tells people apart best, broken down by face size</dd>
+        <dt>Can't answer</dt><dd>Whether it holds up through the real upload → detect → match path</dd>
+      </dl>
+    </div>
+    <div class="test hero">
+      <p class="name">End-to-end sweep</p>
+      <dl>
+        <dt>Varies</dt><dd>Detector <em>and</em> embedder together, as real configs</dd>
+        <dt>Holds constant</dt><dd>Nothing — runs the actual API, actual database</dd>
+        <dt>Answers</dt><dd>Which real, deployable configuration actually wins</dd>
+        <dt>Can't answer</dt><dd>Why — or how each piece would do against alternatives never tried here (opencv, retinaface)</dd>
+      </dl>
+    </div>
+  </div>
+
+  <p>
+    None of the three is redundant. The sweep is staged in four steps specifically so it
+    can approximate an answer to "why" — isolating the detector fix from the embedder swap
+    by changing one at a time — but it still can't tell you SCRFD beats opencv, because it
+    never runs opencv. That fact only exists in the detector comparison.
+  </p>
+</section>
+
+<section id="detector">
+  <h2><span class="num">PART 1</span>Choosing the detector</h2>
+  <p class="lede">
+    Three detectors, identical input, embedder held constant at ArcFace throughout — so any
+    difference in results is purely about how well each one finds a face.
   </p>
 
   <div class="scroll">
     <table>
-      <th scope="col"ead>
-        <tr><th scope="col">Face width</th><th scope="col">Accuracy</th><th scope="col">Positives missed</th><th scope="col">TP</th><th scope="col">FP</th><th scope="col">FN</th><th scope="col">TN</th></tr>
-      </thead>
+      <thead><tr><th scope="col">Detector</th><th scope="col">What it is</th><th scope="col">Found a face</th><th scope="col">Per photo (CPU)</th></tr></thead>
       <tbody>
-        <tr><td>70 px</td><td class="hl-bad">0.800</td><td class="hl-bad">7 / 20</td><td>13</td><td>0</td><td>7</td><td>15</td></tr>
-        <tr><td>110 px</td><td>0.909</td><td>2 / 19</td><td>17</td><td>1</td><td>2</td><td>13</td></tr>
-        <tr><td>160 px</td><td>0.935</td><td>2 / 15</td><td>13</td><td>0</td><td>2</td><td>16</td></tr>
-        <tr class="marked"><td>240 px</td><td class="hl">0.931</td><td class="hl">0 / 12</td><td>12</td><td>2</td><td>0</td><td>15</td></tr>
-        <tr><td>340 px</td><td>0.920</td><td>2 / 10</td><td>8</td><td>0</td><td>2</td><td>15</td></tr>
+        <tr><td>opencv (Haar cascade)</td><td class="dim">2001, no deep learning</td><td class="hl-bad">16/30 · 53%</td><td>226ms</td></tr>
+        <tr><td>retinaface (ResNet50)</td><td class="dim">2019 CNN</td><td>29/30 · 97%</td><td class="hl-bad">14,390ms</td></tr>
+        <tr class="marked"><td><strong>insightface / SCRFD-500MF</strong></td><td class="dim">Lightweight ONNX</td><td class="hl">30/30 · 100%</td><td class="hl">283ms</td></tr>
       </tbody>
     </table>
   </div>
 
   <p style="margin-top:18px">
-    A 70&nbsp;px face fails <strong>35% of the time</strong>. At 240&nbsp;px the pipeline
-    misses nothing at all. That single axis explains most of the recall gap, and it is why
-    the fix that mattered most this cycle was cropping faces from the full-resolution
-    original rather than the downscaled copy used for detection.
+    opencv's Haar cascades are a pre-deep-learning technique — fast because they're doing
+    almost no work, and it shows: they missed nearly half the faces in this sample, mostly
+    at an angle or partially obscured. retinaface fixed that with a real CNN, but DeepFace's
+    implementation is hardcoded to a ResNet50 backbone, and paying 14 seconds per photo does
+    not scale to a 500-photo album. SCRFD is purpose-built to be small — <strong>51× faster
+    than retinaface, while finding more faces than either alternative.</strong> That's why
+    it's the detector for both event photos and, per the sweep below, the selfie too.
   </p>
 </section>
 
-<section>
-  <h2><span class="num">FINDING 03</span>Every job, scored individually</h2>
+<section id="embedder">
+  <h2><span class="num">PART 2</span>Choosing the embedder</h2>
   <p class="lede">
-    Aggregates hide outliers. Ten synthetic identities and three real jobs, each scored on
-    its own at threshold 0.68.
+    Same detector (SCRFD), same crops, fed to two different embedding models — DeepFace's
+    ArcFace (137&nbsp;MB, TensorFlow) against <code>w600k_mbf</code>, a 13.6&nbsp;MB
+    MobileFaceNet already sitting on disk inside the detection pack, unused. Each model
+    gets its own threshold: the two produce incompatible vector spaces, so a shared cutoff
+    would compare apples to oranges.
   </p>
 
   <div class="scroll">
     <table>
-      <th scope="col"ead>
-        <tr>
-          <th scope="col">Job</th><th scope="col">Photos</th><th scope="col">Should match</th><th scope="col">Matched</th>
-          <th scope="col">TP</th><th scope="col">FP</th><th scope="col">FN</th><th scope="col">No face</th>
-          <th scope="col">Precision</th><th scope="col">Recall</th><th scope="col">F1</th><th scope="col"></th>
-        </tr>
-      </thead>
+      <thead><tr><th scope="col">Model</th><th scope="col">Threshold</th><th scope="col">Precision</th><th scope="col">Recall</th><th scope="col">F1</th><th scope="col">False positives</th><th scope="col">Embed time</th></tr></thead>
       <tbody>
-        <tr><td>job01 George W Bush</td><td>16</td><td>8</td><td>6</td><td>6</td><td>0</td><td>2</td><td class="dim">3</td><td>1.000</td><td>0.750</td>
-          <td><div class="bar"><span class="track"><span class="fill" style="width:85.7%"></span></span>0.857</div></td>
-          <td><span class="chip mid">fair</span></td></tr>
-        <tr><td>job02 Colin Powell</td><td>12</td><td>6</td><td>6</td><td>6</td><td>0</td><td>0</td><td class="dim">1</td><td>1.000</td><td>1.000</td>
-          <td><div class="bar"><span class="track"><span class="fill" style="width:100%"></span></span>1.000</div></td>
-          <td><span class="chip ok">clean</span></td></tr>
-        <tr><td>job03 Tony Blair</td><td>18</td><td>9</td><td>5</td><td>5</td><td>0</td><td>4</td><td class="dim">5</td><td>1.000</td><td>0.556</td>
-          <td><div class="bar"><span class="track"><span class="fill warn" style="width:71.4%"></span></span>0.714</div></td>
-          <td><span class="chip mid">fair</span></td></tr>
-        <tr><td>job04 Donald Rumsfeld</td><td>14</td><td>7</td><td>7</td><td>7</td><td>0</td><td>0</td><td class="dim">0</td><td>1.000</td><td>1.000</td>
-          <td><div class="bar"><span class="track"><span class="fill" style="width:100%"></span></span>1.000</div></td>
-          <td><span class="chip ok">clean</span></td></tr>
-        <tr><td>job05 Gerhard Schroeder</td><td>14</td><td>7</td><td>2</td><td>2</td><td>0</td><td>5</td><td class="dim">2</td><td>1.000</td><td class="hl-bad">0.286</td>
-          <td><div class="bar"><span class="track"><span class="fill bad" style="width:44.4%"></span></span>0.444</div></td>
-          <td><span class="chip bad">weak</span></td></tr>
-        <tr><td>job06 Ariel Sharon</td><td>16</td><td>8</td><td>9</td><td>7</td><td class="hl-warn">2</td><td>1</td><td class="dim">3</td><td>0.778</td><td>0.875</td>
-          <td><div class="bar"><span class="track"><span class="fill" style="width:82.4%"></span></span>0.824</div></td>
-          <td><span class="chip mid">fair</span></td></tr>
-        <tr><td>job07 Hugo Chavez</td><td>17</td><td>8</td><td>8</td><td>8</td><td>0</td><td>0</td><td class="dim">4</td><td>1.000</td><td>1.000</td>
-          <td><div class="bar"><span class="track"><span class="fill" style="width:100%"></span></span>1.000</div></td>
-          <td><span class="chip ok">clean</span></td></tr>
-        <tr><td>job08 Junichiro Koizumi</td><td>14</td><td>7</td><td>6</td><td>6</td><td>0</td><td>1</td><td class="dim">0</td><td>1.000</td><td>0.857</td>
-          <td><div class="bar"><span class="track"><span class="fill" style="width:92.3%"></span></span>0.923</div></td>
-          <td><span class="chip ok">clean</span></td></tr>
-        <tr><td>job09 Jean Chretien</td><td>14</td><td>7</td><td>7</td><td>7</td><td>0</td><td>0</td><td class="dim">3</td><td>1.000</td><td>1.000</td>
-          <td><div class="bar"><span class="track"><span class="fill" style="width:100%"></span></span>1.000</div></td>
-          <td><span class="chip ok">clean</span></td></tr>
-        <tr><td>job10 John Ashcroft</td><td>18</td><td>9</td><td>10</td><td>9</td><td class="hl-warn">1</td><td>0</td><td class="dim">3</td><td>0.900</td><td>1.000</td>
-          <td><div class="bar"><span class="track"><span class="fill" style="width:94.7%"></span></span>0.947</div></td>
-          <td><span class="chip ok">clean</span></td></tr>
-        <tr><td>real 24c8ea7c</td><td>4</td><td>4</td><td class="hl-bad">0</td><td>0</td><td>0</td><td>4</td><td class="dim">0</td><td class="dim">—</td><td class="hl-bad">0.000</td>
-          <td><div class="bar"><span class="track"></span>0.000</div></td>
-          <td><span class="chip bad">fails</span></td></tr>
-        <tr><td>real 4092130d</td><td>4</td><td>4</td><td class="hl-bad">0</td><td>0</td><td>0</td><td>4</td><td class="dim">1</td><td class="dim">—</td><td class="hl-bad">0.000</td>
-          <td><div class="bar"><span class="track"></span>0.000</div></td>
-          <td><span class="chip bad">excluded</span></td></tr>
-        <tr><td>real 6fe1d707</td><td>4</td><td>4</td><td>4</td><td>4</td><td>0</td><td>0</td><td class="dim">0</td><td>1.000</td><td>1.000</td>
-          <td><div class="bar"><span class="track"><span class="fill" style="width:100%"></span></span>1.000</div></td>
-          <td><span class="chip mid">inflated</span></td></tr>
-        <tr class="total"><td>Synthetic — 10 jobs</td><td>153</td><td>76</td><td>66</td><td>63</td><td>3</td><td>13</td><td>24</td><td>0.955</td><td>0.829</td>
-          <td><div class="bar"><span class="track"><span class="fill" style="width:88.7%"></span></span>0.887</div></td><td></td></tr>
-        <tr class="total"><td>Real — 3 jobs</td><td>12</td><td>12</td><td>4</td><td>4</td><td>0</td><td>8</td><td>1</td><td>1.000</td><td>0.333</td>
-          <td><div class="bar"><span class="track"><span class="fill bad" style="width:50%"></span></span>0.500</div></td><td></td></tr>
-        <tr class="total"><td><strong>Whole pipeline</strong></td><td>165</td><td>88</td><td>70</td><td>67</td><td>3</td><td>21</td><td>25</td><td>0.957</td><td>0.761</td>
-          <td><div class="bar"><span class="track"><span class="fill" style="width:84.8%"></span></span>0.848</div></td><td></td></tr>
+        <tr><td>DeepFace ArcFace</td><td>0.65</td><td>0.955</td><td>0.829</td><td>0.887</td><td>3</td><td>65s</td></tr>
+        <tr class="marked"><td>w600k_mbf</td><td>0.60</td><td class="hl">1.000</td><td class="hl">0.842</td><td class="hl">0.914</td><td class="hl">0</td><td class="hl">4s</td></tr>
       </tbody>
     </table>
   </div>
 
-  <div class="cols" style="margin-top:26px">
-    <div class="note warn">
-      <span class="tag">Outlier worth investigating</span>
-      <p>
-        <strong>job05 Gerhard Schroeder — F1 0.444.</strong> Only 2 of 7 found, and just
-        2 photos had no face detected. So three photos <em>were</em> detected and still
-        scored too far away. That is a matching failure, not a detection one, and the only
-        job in the corpus where that's true.
-      </p>
-    </div>
-    <div class="note">
-      <span class="tag">Honest caveat</span>
-      <p>
-        <strong>real 6fe1d707's perfect 1.000 is inflated.</strong> Its selfie is
-        byte-identical to one of its own four event photos, so one match is guaranteed at
-        distance 0.0195 — the pipeline is scoring an image against itself.
-      </p>
-    </div>
+  <h3>Broken down by face size</h3>
+  <p>
+    Aggregate F1 hides where a model actually struggles. The synthetic corpus fixes every
+    variable except one — how many pixels wide the target's face is — so this table isolates
+    it cleanly.
+  </p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th scope="col">Face width</th><th scope="col">DeepFace ArcFace</th><th scope="col">w600k_mbf</th><th scope="col">Difference</th></tr></thead>
+      <tbody>
+        <tr><td>70 px</td><td class="hl-bad">0.800</td><td class="hl-bad">0.800</td><td class="dim">none — both fail here</td></tr>
+        <tr><td>110 px</td><td>0.848</td><td class="hl">0.939</td><td>+0.091</td></tr>
+        <tr><td>160 px</td><td>0.968</td><td>0.968</td><td class="dim">none</td></tr>
+        <tr><td>240 px</td><td>0.931</td><td class="hl">0.966</td><td>+0.035</td></tr>
+        <tr><td>340 px</td><td>0.960</td><td>0.960</td><td class="dim">none</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:18px">
+    At 70&nbsp;px the two models are identical — swapping the embedder is not a fix for
+    small faces. Above that, <code>w600k_mbf</code> is flat-out better or tied everywhere.
+  </p>
+
+  <h3>Where it actually matters: real photos</h3>
+  <p>
+    The synthetic corpus is LFW faces composited onto generated backgrounds — controlled,
+    but not what a phone camera produces. Eight real photos are the harder, honest test.
+    Every one contains the target, so this measures <strong>recall only</strong>; with no
+    negatives, precision would read 1.000 by construction and mean nothing. The real
+    question: how far does each model's threshold have to move to recover every real photo,
+    and what does that cost back on the labelled corpus, where false positives
+    <em>are</em> measurable?
+  </p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th scope="col">Model</th><th scope="col">Threshold for 8/8 real</th><th scope="col">Synthetic precision there</th><th scope="col">Synthetic false positives there</th></tr></thead>
+      <tbody>
+        <tr><td>DeepFace ArcFace</td><td>0.90</td><td class="hl-bad">0.606</td><td class="hl-bad">43</td></tr>
+        <tr class="marked"><td>w600k_mbf</td><td class="hl">0.70</td><td class="hl">1.000</td><td class="hl">0</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:18px">
+    <code>w600k_mbf</code> recovers every real photo while making zero mistakes on the
+    labelled corpus. ArcFace can only get there by opening the threshold so wide it produces
+    43 false positives — it cannot find these photos and stay usable at the same time.
+  </p>
+
+  <div class="note">
+    <span class="tag">Port validated before any of this was trusted</span>
+    <p>
+      Wrong preprocessing on an ONNX model still returns a confident, correctly-shaped,
+      meaningless vector — it fails silently. <code>w600k_mbf</code>'s output was checked
+      against insightface's own reference implementation on identical input before any
+      comparison ran: cosine distance <code>0.00000000</code>.
+    </p>
   </div>
 </section>
 
-<section>
-  <h2><span class="num">FINDING 04</span>Where the real photos actually land</h2>
+<section id="sweep">
+  <h2><span class="num">PART 3</span>Does it hold up end-to-end?</h2>
   <p class="lede">
-    Counts hide near-misses. Each dot is one real photo's cosine distance from its selfie;
-    anything left of the cutoff is returned as a match. This is the whole matching decision,
-    drawn.
+    Both comparisons above ran through hand-rolled crop/detect/align code, not
+    <code>face_matcher.py</code> itself — reasonable for isolating one variable, but not
+    proof the real pipeline behaves the same way. This closes that gap: four
+    configurations, each processed through the actual API, actual Postgres, actual worker,
+    on the same 13 jobs. Not four independent runs — one change at a time, each measured
+    before the next was made.
   </p>
 
+  <div class="stages">
+    <div class="stage">
+      <p class="idx">Stage 1 — today</p>
+      <h4>Production as shipped</h4>
+      <div class="metric"><span>Selfie detector</span><b>mtcnn</b></div>
+      <div class="metric"><span>Embedder</span><b>DeepFace ArcFace</b></div>
+      <div class="metric"><span>F1</span><b>0.903</b></div>
+      <div class="metric"><span>False positives</span><b>3</b></div>
+      <div class="metric"><span>Real-job recall</span><b>0.625</b></div>
+      <div class="metric"><span>Time, 13 jobs</span><b>929s</b></div>
+    </div>
+    <div class="stage">
+      <p class="idx">Stage 2 — one fix</p>
+      <h4>Selfie switched to SCRFD</h4>
+      <div class="metric"><span>Selfie detector</span><b class="hl">SCRFD</b></div>
+      <div class="metric"><span>Embedder</span><b>DeepFace ArcFace</b></div>
+      <div class="metric"><span>F1</span><b class="hl">0.938</b></div>
+      <div class="metric"><span>False positives</span><b class="hl">1</b></div>
+      <div class="metric"><span>Real-job recall</span><b class="hl">0.750</b></div>
+      <div class="metric"><span>Time, 13 jobs</span><b class="hl">377s</b></div>
+      <p class="delta">↑ every metric improves, 2.5× faster</p>
+    </div>
+    <div class="stage win">
+      <p class="idx">Stage 3 — + embedder</p>
+      <h4>Swap to w600k_mbf</h4>
+      <div class="metric"><span>Selfie detector</span><b>SCRFD</b></div>
+      <div class="metric"><span>Embedder</span><b class="hl">w600k_mbf</b></div>
+      <div class="metric"><span>F1</span><b class="hl">0.959</b></div>
+      <div class="metric"><span>False positives</span><b class="hl">0</b></div>
+      <div class="metric"><span>Real-job recall</span><b class="hl">0.875</b></div>
+      <div class="metric"><span>Time, 13 jobs</span><b class="hl">74s</b></div>
+      <p class="delta">↑ best result, 12.6× faster than stage 1</p>
+    </div>
+    <div class="stage">
+      <p class="idx">Stage 4 — tie-break</p>
+      <h4>Try the bigger model</h4>
+      <div class="metric"><span>Selfie detector</span><b>SCRFD</b></div>
+      <div class="metric"><span>Embedder</span><b>w600k_r50 (174&nbsp;MB)</b></div>
+      <div class="metric"><span>F1</span><b>0.959</b></div>
+      <div class="metric"><span>False positives</span><b>0</b></div>
+      <div class="metric"><span>Real-job recall</span><b>0.750</b></div>
+      <div class="metric"><span>Time, 13 jobs</span><b>150s</b></div>
+      <p class="delta flat">= ties stage 3, slower</p>
+    </div>
+  </div>
+
+  <p style="margin-top:22px">
+    Stage 2 isolates the detector fix from the embedder swap on purpose — it proves the
+    selfie's detector mismatch was a real, costly bug on its own, not a rounding error that
+    happened to wash out once a better model arrived. Stage 4 asks the obvious follow-up:
+    does spending 13× the model size buy anything?
+  </p>
+
+  <h3>Exactly one photo, illustrated</h3>
+  <p>
+    Here's what stage 1's bug actually looked like on one real job — the selfie's poor crop,
+    not a weak model, putting genuine matches just past the cutoff.
+  </p>
   <div class="lines">
     <div class="jobline">
-      <div class="head"><span class="name">real 24c8ea7c</span><span class="res">0 of 4 matched — every photo just past the line</span></div>
+      <div class="head"><span class="name">One real job, stage 1</span><span class="res">0 of 4 matched — every photo just past the line</span></div>
       <div class="track2">
         <div class="zone"></div>
         <div class="cut"><span>0.68</span></div>
@@ -421,307 +623,82 @@
       </div>
       <div class="axis"><span>0.0 identical</span><span>1.0 unrelated</span></div>
     </div>
-
-    <div class="jobline">
-      <div class="head"><span class="name">real 6fe1d707</span><span class="res">4 of 4 matched — but the leftmost dot is the selfie itself</span></div>
-      <div class="track2">
-        <div class="zone"></div>
-        <div class="cut"><span>0.68</span></div>
-        <div class="dot hit" style="left:1.95%"></div><div class="dlabel" style="left:1.95%">.020</div>
-        <div class="dot hit" style="left:7.57%"></div><div class="dlabel" style="left:7.57%">.076</div>
-        <div class="dot hit" style="left:31.75%"></div><div class="dlabel" style="left:31.75%">.318</div>
-        <div class="dot hit" style="left:44.73%"></div><div class="dlabel" style="left:44.73%">.447</div>
-      </div>
-      <div class="axis"><span>0.0 identical</span><span>1.0 unrelated</span></div>
-    </div>
-
-    <div class="jobline">
-      <div class="head"><span class="name">real 4092130d</span><span class="res">0 of 4 — excluded: the selfie is a four-person group photo</span></div>
-      <div class="track2">
-        <div class="zone"></div>
-        <div class="cut"><span>0.68</span></div>
-        <div class="dot" style="left:85.53%"></div><div class="dlabel" style="left:85.53%">.855</div>
-        <div class="dot" style="left:88.8%"></div><div class="dlabel" style="left:88.8%">.888</div>
-        <div class="dot" style="left:95.83%"></div><div class="dlabel" style="left:95.83%">.958</div>
-        <div class="dot none" style="left:99%"></div><div class="dlabel" style="left:99%">none</div>
-      </div>
-      <div class="axis"><span>0.0 identical</span><span>1.0 unrelated</span></div>
-    </div>
   </div>
-
-  <div class="legend">
-    <span><i style="background:var(--accent)"></i>matched</span>
-    <span><i style="background:var(--bad)"></i>missed</span>
-    <span><i style="background:var(--faint)"></i>no face detected</span>
-    <span><i style="background:var(--bad);width:2px;height:11px;border-radius:0"></i>0.68 cutoff</span>
-  </div>
-
-  <div class="note bad" style="margin-top:26px">
-    <span class="tag">The most actionable defect on this page</span>
-    <p>
-      <code>real 24c8ea7c</code> fails by a hair — <strong>0.691 and 0.705 against a 0.68
-      cutoff</strong>. That is not a model that can't recognise the person; it's a model
-      being handed a poor crop of them.
-    </p>
-    <p>
-      The selfie path still downscales to 1024&nbsp;px, detects with mtcnn, and takes
-      whichever face the library returns first. Event photos were fixed to detect small and
-      crop from the original; the selfie never was. Swapping the selfie to the same detector
-      and largest-face selection takes this job from <strong>0/4 to 2/4</strong>, measured.
-    </p>
-  </div>
-</section>
-
-<section>
-  <h2><span class="num">FINDING 05</span>0.68 is close to the right cutoff</h2>
-  <p class="lede">
-    The threshold is the one number a user could plausibly tune. Sweeping it across the
-    synthetic corpus shows how little headroom there is.
+  <div class="legend"><span><i style="background:var(--bad)"></i>missed</span><span><i style="background:var(--bad);width:2px;height:11px;border-radius:0"></i>0.68 cutoff</span></div>
+  <p style="margin-top:20px">
+    Two of these four missed by <strong>0.011 and 0.025</strong> — close enough that a poor
+    selfie crop, not a weak embedder, is the obvious suspect. Measured outcome for this job
+    specifically: the stage-2 fix alone moved it from 0/4 to 2/4, before the embedder was
+    even touched.
   </p>
 
-  <div class="scroll">
-    <table>
-      <th scope="col"ead>
-        <tr><th scope="col">Threshold</th><th scope="col">Precision</th><th scope="col">Recall</th><th scope="col">F1</th><th scope="col">Accuracy</th><th scope="col">TP</th><th scope="col">FP</th><th scope="col">FN</th><th scope="col">TN</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>0.50</td><td>1.000</td><td>0.605</td><td>0.754</td><td>0.804</td><td>46</td><td>0</td><td>30</td><td>77</td></tr>
-        <tr><td>0.55</td><td>1.000</td><td>0.684</td><td>0.813</td><td>0.843</td><td>52</td><td>0</td><td>24</td><td>77</td></tr>
-        <tr><td>0.60</td><td>1.000</td><td>0.763</td><td>0.866</td><td>0.882</td><td>58</td><td>0</td><td>18</td><td>77</td></tr>
-        <tr><td>0.65</td><td>0.969</td><td>0.816</td><td>0.886</td><td>0.895</td><td>62</td><td>2</td><td>14</td><td>75</td></tr>
-        <tr class="marked"><td><strong>0.68 — shipped</strong></td><td>0.955</td><td>0.829</td><td>0.887</td><td>0.895</td><td>63</td><td>3</td><td>13</td><td>74</td></tr>
-        <tr><td>0.70</td><td>0.956</td><td>0.855</td><td class="hl">0.903</td><td>0.908</td><td>65</td><td>3</td><td>11</td><td>74</td></tr>
-        <tr><td>0.75</td><td>0.892</td><td>0.868</td><td>0.880</td><td>0.882</td><td>66</td><td>8</td><td>10</td><td>69</td></tr>
-        <tr><td>0.80</td><td>0.861</td><td>0.895</td><td>0.877</td><td>0.876</td><td>68</td><td>11</td><td>8</td><td>66</td></tr>
-        <tr><td>0.85</td><td>0.775</td><td>0.908</td><td>0.836</td><td>0.824</td><td>69</td><td>20</td><td>7</td><td>57</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <p style="margin-top:18px">
-    <strong>0.70 edges it</strong> — F1 0.903 against 0.887, gaining two true positives at no
-    cost in false ones. Past 0.75 precision collapses fast: 0.85 buys six more matches and
-    pays with seventeen wrong ones.
-  </p>
-  <div class="note">
-    <span class="tag">Why this sweep was worth re-running</span>
-    <p>
-      Against the <em>broken</em> pipeline, the same sweep put the optimum at 0.85. Calibrating
-      then would have baked the downscale bug into the threshold and hidden it permanently.
-      Fix the pipeline, then tune the number — not the other way round.
-    </p>
-  </div>
-</section>
-
-<section>
-  <h2><span class="num">FINDING 06</span>The detector choice, re-measured</h2>
-  <p class="lede">
-    Three detectors, identical input images, 30-photo sample. Only the detector varies.
-  </p>
-
-  <div class="scroll">
-    <table>
-      <th scope="col"ead><tr><th scope="col">Detector</th><th scope="col">Found a face</th><th scope="col">Rate</th><th scope="col">Per photo</th><th scope="col">Verdict</th></tr></thead>
-      <tbody>
-        <tr><td>opencv (Haar cascade)</td><td>16 / 30</td><td class="hl-bad">53%</td><td>226 ms</td><td>Fast and silently broken</td></tr>
-        <tr><td>retinaface (ResNet50)</td><td>29 / 30</td><td>97%</td><td class="hl-bad">14,390 ms</td><td>Accurate, unusably slow</td></tr>
-        <tr class="marked"><td><strong>insightface / SCRFD-500MF</strong></td><td class="hl">30 / 30</td><td class="hl">100%</td><td class="hl">283 ms</td><td>Shipped</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p style="margin-top:18px">
-    insightface is <strong>51× faster than retinaface</strong> and found more faces than either
-    alternative. The original opencv default was the worst possible failure mode: quick,
-    confident, and wrong more than a third of the time.
-  </p>
-</section>
-
-<section>
-  <h2><span class="num">FINDING 07</span>The on-device model beats the server one</h2>
-  <p class="lede">
-    <code>w600k_mbf</code> is a 13.6&nbsp;MB MobileFaceNet that already ships inside the
-    detection pack. Same photos, same detector, same crops — only the embedder changes, and
-    each model gets its own threshold because the two produce different vector spaces.
-  </p>
-
-  <div class="scroll">
-    <table>
-      <th scope="col"ead><tr><th scope="col">Model</th><th scope="col">Best threshold</th><th scope="col">Precision</th><th scope="col">Recall</th><th scope="col">F1</th><th scope="col">False positives</th><th scope="col">Embed time</th><th scope="col">Size</th></tr></thead>
-      <tbody>
-        <tr><td>DeepFace ArcFace <span class="chip mid">current</span></td><td>0.65</td><td>0.955</td><td>0.829</td><td>0.887</td><td>3</td><td>102 s</td><td>137 MB</td></tr>
-        <tr class="marked"><td>w600k_mbf</td><td>0.60</td><td class="hl">1.000</td><td class="hl">0.842</td><td class="hl">0.914</td><td class="hl">0</td><td class="hl">6 s</td><td class="hl">13.6 MB</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <h3>But it does not fix small faces</h3>
-  <div class="scroll">
-    <table>
-      <th scope="col"ead><tr><th scope="col">Face width</th><th scope="col">DeepFace ArcFace</th><th scope="col">w600k_mbf</th><th scope="col">Difference</th></tr></thead>
-      <tbody>
-        <tr><td>70 px</td><td>0.800</td><td>0.800</td><td class="dim">none</td></tr>
-        <tr><td>110 px</td><td>0.848</td><td class="hl">0.939</td><td>+0.091</td></tr>
-        <tr><td>160 px</td><td>0.968</td><td>0.968</td><td class="dim">none</td></tr>
-        <tr><td>240 px</td><td>0.931</td><td class="hl">0.966</td><td>+0.035</td></tr>
-        <tr><td>340 px</td><td>0.960</td><td>0.960</td><td class="dim">none</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <p style="margin-top:18px">
-    At 70&nbsp;px the two are <strong>identical</strong>. On the synthetic corpus, swapping
-    models is a 17× speed win and a small accuracy win — it is not a fix for small faces.
-  </p>
-
-  <h3>On the real photos, it is decisive</h3>
+  <h3>Does the bigger model actually win?</h3>
   <p>
-    The synthetic corpus is LFW faces composited onto phone-sized canvases. The eight real
-    photos are the actual product input, and they are the harder case. Every one contains the
-    target, so this measures <strong>recall only</strong> — with no negatives, precision there
-    would read 1.000 by construction and mean nothing. The honest question is how far each
-    model's threshold has to move to recover all eight, and what that costs back on the
-    labelled corpus where false positives <em>are</em> measurable.
+    Stage 4 exists to answer one question: is <code>mbf</code>'s size the whole story, or
+    is it leaving real accuracy on the table? On the 163-photo synthetic corpus, it's an
+    <strong>exact tie</strong> — identical precision, recall, F1, zero false positives for
+    both. The only place they differ is real-job recall, 0.875 vs 0.750.
   </p>
-
-  <div class="scroll">
-    <table>
-      <thead><tr><th scope="col">Model</th><th scope="col">Real photos at its own threshold</th><th scope="col">Threshold for 8/8</th><th scope="col">Synthetic precision there</th><th scope="col">Synthetic FP there</th></tr></thead>
-      <tbody>
-        <tr><td>DeepFace ArcFace <span class="chip mid">current</span></td><td>6/8 <span class="dim">at 0.65</span></td><td>0.90</td><td>0.606</td><td>43</td></tr>
-        <tr class="marked"><td>w600k_mbf</td><td class="hl">7/8 <span class="dim">at 0.60</span></td><td class="hl">0.70</td><td class="hl">1.000</td><td class="hl">0</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <p style="margin-top:18px">
-    <code>w600k_mbf</code> recovers <strong>every real photo at 0.70 while still making zero
-    mistakes</strong> on the labelled corpus. ArcFace can only reach all eight by opening up to
-    0.90, and at that point it produces <strong>43 false positives</strong> and precision
-    collapses to 0.606 — it cannot find these photos and stay usable at the same time. That is
-    a different claim from the synthetic table above, and a much stronger one.
-  </p>
-
   <div class="note warn">
-    <span class="tag">Status</span>
+    <span class="tag">The honest limit of that number</span>
     <p>
-      <strong>Measured, not adopted.</strong> Production still runs DeepFace ArcFace. Switching
-      invalidates every cached embedding and needs the threshold re-derived, so it is migration
-      work rather than a config change.
+      That gap is <strong>one photo out of eight</strong>. Not enough evidence to call
+      <code>mbf</code> more accurate than <code>r50</code> on real photos — read it as a
+      tie, decided by <code>mbf</code> also being 2× faster and 13× smaller. An easy call,
+      just not an accuracy win.
     </p>
+  </div>
+  <div class="note" style="margin-top:18px">
+    <span class="tag">Port validated inside the real pipeline this time</span>
     <p>
-      The ONNX port was validated against insightface's own reference implementation on
-      identical input — cosine distance <code>0.00000000</code> — before any of these numbers
-      were trusted. Wrong preprocessing returns a confident, correctly-shaped, meaningless
-      vector, so this check comes first or the comparison is worthless.
+      Both models checked against insightface's reference implementation from <em>inside
+      the actual worker container</em>, against <code>face_matcher.py</code>'s real code —
+      not a separate copy. <code>w600k_mbf</code>: <code>0.0</code>.
+      <code>w600k_r50</code>: <code>2.22e-16</code> (floating-point noise). Both pass.
     </p>
   </div>
 </section>
 
 <section>
-  <h2><span class="num">FINDING 08</span>What it costs to run</h2>
-  <p class="lede">
-    Wall-clock around <code>/process</code> with the worker already warm. No model loading, no
-    upload, no zip extraction — just fetch, detect, embed, compare, write.
-  </p>
-
-  <div class="scroll">
-    <table>
-      <th scope="col"ead><tr><th scope="col">Job</th><th scope="col">Photos</th><th scope="col">Cold</th><th scope="col">Per photo</th><th scope="col">Embeddings cached</th><th scope="col">Speed-up</th></tr></thead>
-      <tbody>
-        <tr><td>job01 George W Bush</td><td>16</td><td>25.6 s</td><td>1.60 s</td><td>24.2 s</td><td class="dim">1.1×</td></tr>
-        <tr><td>job02 Colin Powell</td><td>12</td><td>18.1 s</td><td>1.51 s</td><td>11.9 s</td><td>1.5×</td></tr>
-        <tr><td>job03 Tony Blair</td><td>18</td><td>20.0 s</td><td>1.11 s</td><td>15.3 s</td><td>1.3×</td></tr>
-        <tr><td>job04 Donald Rumsfeld</td><td>14</td><td>18.6 s</td><td>1.33 s</td><td>12.0 s</td><td>1.5×</td></tr>
-        <tr><td>job05 Gerhard Schroeder</td><td>14</td><td>18.5 s</td><td>1.32 s</td><td>12.3 s</td><td>1.5×</td></tr>
-        <tr><td>job06 Ariel Sharon</td><td>16</td><td>19.7 s</td><td>1.23 s</td><td>13.7 s</td><td>1.4×</td></tr>
-        <tr><td>job07 Hugo Chavez</td><td>17</td><td>20.6 s</td><td>1.21 s</td><td>11.5 s</td><td>1.8×</td></tr>
-        <tr><td>job08 Junichiro Koizumi</td><td>14</td><td>19.1 s</td><td>1.36 s</td><td>10.4 s</td><td>1.8×</td></tr>
-        <tr><td>job09 Jean Chretien</td><td>14</td><td>19.1 s</td><td>1.36 s</td><td>11.0 s</td><td>1.5×</td></tr>
-        <tr><td>job10 John Ashcroft</td><td>18</td><td>20.2 s</td><td>1.12 s</td><td>11.8 s</td><td>1.7×</td></tr>
-        <tr><td>real 24c8ea7c</td><td>4</td><td>11.4 s</td><td class="dim">2.85 s</td><td>10.0 s</td><td class="dim">1.1×</td></tr>
-        <tr><td>real 6fe1d707</td><td>4</td><td>11.7 s</td><td class="dim">2.92 s</td><td>11.1 s</td><td class="dim">1.1×</td></tr>
-        <tr><td>real 4092130d</td><td>4</td><td>14.7 s</td><td class="dim">3.67 s</td><td>16.1 s</td><td class="dim">0.9×</td></tr>
-        <tr class="total"><td><strong>All 13 jobs</strong></td><td>165</td><td>234.7 s</td><td>1.42 s</td><td>171.2 s</td><td>1.4×</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <p style="margin-top:18px">
-    <strong>1.42 s per photo.</strong> A 500-photo archive — the current per-job ceiling —
-    projects to about 12 minutes on one CPU core.
-  </p>
-
-  <div class="note warn">
-    <span class="tag">Caching helps less than advertised</span>
-    <p>
-      Re-running a job with its embeddings already cached is only <strong>1.4× faster</strong>,
-      not the "nearly instant" the docs claim. Part of that is the selfie embedding, which is
-      recomputed on every run at roughly 3.3&nbsp;s — event photos are cached, the selfie is not.
-      The remaining gap has not been isolated.
-    </p>
-    <p>
-      It matters less than it looks: caching only pays off when the same job is processed twice,
-      which in practice means a threshold change, not a re-upload.
-    </p>
-  </div>
-</section>
-
-<section>
-  <h2><span class="num">METHOD</span>How these numbers were produced</h2>
-  <div class="cols">
-    <div>
-      <h3 style="margin-top:0">Through the real API, not around it</h3>
-      <p style="font-size:15.5px">
-        Every job was uploaded exactly as a phone would: <code>upload/init</code>, presigned
-        PUTs straight to object storage, a multipart zip, then <code>complete</code>. The worker
-        extracted each archive and ran the production matcher. Nothing read photos off disk
-        behind the API's back, so these numbers describe the shipped pipeline.
-      </p>
-    </div>
-    <div>
-      <h3 style="margin-top:0">Labels live in the filenames</h3>
-      <p style="font-size:15.5px">
-        <code>p03_pos_240px.jpg</code> already states the answer and the face size, and the
-        pipeline preserves it as <code>original_filename</code>. There is no ground-truth
-        file to drift out of sync with the photos. The three real jobs carry no marker, so
-        their labels are the one thing recorded by hand.
-      </p>
-    </div>
-  </div>
-
-  <h3>What these numbers are not</h3>
+  <h2><span class="num">CAVEATS</span>What these numbers are not</h2>
   <ul class="tight">
     <li>
-      <strong>The synthetic corpus is composited.</strong> LFW faces pasted onto generated
-      backgrounds at controlled sizes. It isolates the face-size axis cleanly, but it has none
-      of the motion blur, mixed lighting or odd angles of real event photography.
+      <strong>Small real-photo counts.</strong> 8 photos back the mbf-vs-r50 tie-break, 16
+      back the selfie-fix comparison. A difference of one photo moves these numbers a lot —
+      read small gaps as noise, not signal.
     </li>
     <li>
-      <strong>Twelve real photos is not a sample.</strong> One person, one trip, one outfit.
-      They can show a failure exists; they cannot measure how often it happens.
+      <strong>The synthetic corpus is composited.</strong> LFW faces pasted onto generated
+      backgrounds at controlled sizes — it isolates the face-size axis cleanly, but has none
+      of the motion blur, mixed lighting, or odd angles of real event photography.
     </li>
     <li>
       <strong>Ten identities, all public figures.</strong> No meaningful diversity in age or
       ethnicity, which is exactly where face models are known to degrade.
     </li>
     <li>
-      <strong>CPU on a dev machine without AVX2/FMA.</strong> Absolute timings will differ
-      elsewhere; the relative ordering should hold, since all variants were measured identically.
+      <strong>CPU, on a dev machine without AVX2/FMA.</strong> Absolute timings will differ
+      elsewhere; the relative ordering should hold, since every config was measured
+      identically.
+    </li>
+    <li>
+      <strong>Nothing here has run on a phone.</strong> This proves which model to use, not
+      that an Android port of it detects and aligns faces identically — that's a separate
+      port-validation question for whenever real on-device detection code exists.
     </li>
   </ul>
 </section>
 
-<section>
-  <h2><span class="num">NEXT</span>What the evidence says to fix</h2>
+<section id="next">
+  <h2><span class="num">NEXT</span>What's actually still open</h2>
   <div class="scroll">
     <table>
-      <th scope="col"ead><tr><th scope="col">Fix</th><th scope="col">Evidence</th><th scope="col">Worth</th></tr></thead>
+      <thead><tr><th scope="col">Item</th><th scope="col">Status</th></tr></thead>
       <tbody>
-        <tr><td>Selfie detector &amp; face selection</td><td>0.691 / 0.705 against a 0.68 cutoff</td><td class="hl">24c8ea7c: 0/4 → 2/4</td></tr>
-        <tr><td>Detection at small face sizes</td><td>25 photos with no face found; 70 px fails 35%</td><td class="hl">Largest share of the 21 misses</td></tr>
-        <tr><td>Raise threshold 0.68 → 0.70</td><td>F1 0.887 → 0.903, no new false positives</td><td>+2 true positives, one-line change</td></tr>
-        <tr><td>Investigate job05</td><td>3 detected faces still scored too far</td><td class="dim">Unknown — may be a hard identity</td></tr>
-        <tr class="marked"><td>Adopt w600k_mbf</td><td>8/8 real photos at 0.70 with 0 FPs; ArcFace needs 0.90 and 43 FPs</td><td class="hl">Now the strongest single change</td></tr>
+        <tr><td>Selfie detector mismatch</td><td class="hl">Fixed, measured — <code>SELFIE_DETECTOR_MODE=scrfd</code></td></tr>
+        <tr><td>Embedder shootout (mbf vs r50 vs DeepFace)</td><td class="hl">Done — mbf wins on size and speed, ties on accuracy</td></tr>
+        <tr><td>Adopt the winning config in production</td><td class="hl-bad">Measured, not adopted — needs a threshold re-derivation and an embedding-cache wipe</td></tr>
+        <tr><td>Port to Android</td><td class="hl-bad">Timing spike only (~350ms/photo, mid-range phone) — no real on-device detection/matching code yet</td></tr>
       </tbody>
     </table>
   </div>
@@ -730,13 +707,13 @@
 <footer>
   <p>
     SnapFind AI — face recognition backend. FastAPI · PostgreSQL + pgvector · MinIO/S3 ·
-    Redis + RQ · DeepFace (ArcFace) · insightface (SCRFD).
+    Redis + RQ · DeepFace (ArcFace) · insightface (SCRFD) · onnxruntime (mbf/r50 candidates).
   </p>
   <p>
     Reproduce: <code>build_corpus.py</code> → <code>seed_jobs.py</code> →
-    <code>evaluate_corpus.py</code>, <code>compare_embedders.py</code>,
-    <code>detector_comparison.py</code>. Detector figures dated 9 Sep 2026; embedder comparison
-    re-run 24 Sep 2026 with the real photos included; all others 10 Sep 2026.
+    <code>evaluate_corpus.py --sweep</code>, <code>compare_embedders.py</code>,
+    <code>detector_comparison.py</code> — see <code>benchmarks/README.md</code>. Sweep dated
+    25 Sep 2026; detector comparison 9 Sep 2026; embedder/face-size comparison 24 Sep 2026.
   </p>
 </footer>
 
