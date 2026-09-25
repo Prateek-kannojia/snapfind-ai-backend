@@ -80,6 +80,11 @@ services:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-snapfind}:${POSTGRES_PASSWORD:-snapfind}@postgres:5432/${POSTGRES_DB:-snapfind}
       REDIS_URL: redis://redis:6379/0
       RQ_WORKER_CLASS: default
+      # Detector/embedder config for the on-device evaluation sweep
+      # (benchmarks/evaluate_corpus.py --sweep) — see core/settings.py.
+      # Unset, both default to exactly today's production behaviour.
+      SELFIE_DETECTOR_MODE: ${SELFIE_DETECTOR_MODE:-legacy}
+      EMBEDDER: ${EMBEDDER:-deepface}
       S3_ENDPOINT_URL: http://minio:9000
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:-snapfind}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-snapfind123}

@@ -55,6 +55,17 @@ class Settings:
         # match at threshold 0.68) vs 0.7144 on 73px crops. Detection is cheap
         # at low resolution; embedding needs real pixels.
         self.crop_from_original = os.getenv("CROP_FROM_ORIGINAL", "true").lower() != "false"
+        # Detector/embedder config for the on-device evaluation sweep
+        # (benchmarks/evaluate_corpus.py --sweep). Defaults reproduce exactly
+        # today's production behaviour — changing them is opt-in only.
+        #   SELFIE_DETECTOR_MODE=legacy  selfie: DeepFace + selfie_detector (mtcnn), unchanged
+        #                        =scrfd   selfie: same SCRFD detector + crop-from-original
+        #                                 event photos already use, for consistency
+        #   EMBEDDER=deepface  DeepFace ArcFace (current production model)
+        #           =mbf       insightface w600k_mbf.onnx, run directly via onnxruntime
+        #           =r50       insightface w600k_r50.onnx, run directly via onnxruntime
+        self.selfie_detector_mode = os.getenv("SELFIE_DETECTOR_MODE", "legacy")
+        self.embedder = os.getenv("EMBEDDER", "deepface")
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.rq_queue_name = os.getenv("RQ_QUEUE_NAME", "face-matching")
         self.rq_job_timeout_seconds = int(os.getenv("RQ_JOB_TIMEOUT_SECONDS", "1800"))

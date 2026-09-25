@@ -22,9 +22,20 @@ numbers instead of nine more trips through the models.
 
     venv\\Scripts\\python.exe benchmarks\\seed_jobs.py        # once
     venv\\Scripts\\python.exe benchmarks\\evaluate_corpus.py
+
+--sweep runs the whole corpus through the real API once per
+(SELFIE_DETECTOR_MODE, EMBEDDER) combo in SWEEP_CONFIGS below — force-
+recreating the worker container between configs so it picks up the new
+env, and wiping cached embeddings so each config scores its own freshly
+computed distances rather than the previous config's cache. Needs `docker
+compose` on PATH and the stack already up.
+
+    venv\\Scripts\\python.exe benchmarks\\evaluate_corpus.py --sweep
 """
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 import time
 from collections import defaultdict
@@ -35,8 +46,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import requests  # noqa: E402
 
 from _common import (  # noqa: E402
-    discover_jobs, label_from, md_table, p, score, seeded_job_ids,
-    write_results_section,
+    BACKEND, discover_jobs, md_table, p, records_from_distances, score,
+    seeded_job_ids, wipe_cached_embeddings, write_results_section,
 )
 
 API = "http://localhost:8000"
@@ -110,17 +121,102 @@ def run_job(job: dict, job_id: str) -> list[dict]:
         p(f"  {job['name']}: could not read matches (job {job_id[:8]})")
         return []
 
-    records = []
-    for ph in job["photos"]:
-        truth, face_px = label_from(ph.name)
-        if truth is None:
-            truth = job["all_positive"]
-        records.append({"job": job["name"], "source": job["source"],
-                        "ambiguous": job["ambiguous"], "truth": truth,
-                        "face_px": face_px, "d": found.get(ph.name)})
+    records = records_from_distances(job, found)
     p(f"  {job['name']}: {len(records)} photos, {len(found)} faces found "
       f"(job {job_id[:8]})")
     return records
+
+
+# label, SELFIE_DETECTOR_MODE, EMBEDDER. "baseline" reproduces exactly
+# today's production defaults (see core/settings.py) — everything else is
+# opt-in via these env vars, never the default.
+SWEEP_CONFIGS = [
+    ("baseline (current production)", "legacy", "deepface"),
+    ("scrfd selfie + DeepFace", "scrfd", "deepface"),
+    ("scrfd selfie + w600k_mbf", "scrfd", "mbf"),
+    ("scrfd selfie + w600k_r50", "scrfd", "r50"),
+]
+
+
+def _restart_worker(selfie_mode: str, embedder: str) -> None:
+    """Force-recreate the worker container with new env — Settings is read
+    once at process start, so there's no way to pick up a new
+    SELFIE_DETECTOR_MODE/EMBEDDER without restarting the process."""
+    env = {**os.environ, "SELFIE_DETECTOR_MODE": selfie_mode, "EMBEDDER": embedder}
+    subprocess.run(
+        ["docker", "compose", "up", "-d", "--force-recreate", "worker"],
+        cwd=BACKEND, env=env, check=True, capture_output=True, text=True,
+    )
+    time.sleep(5)  # let the process finish starting before jobs land on it
+
+
+def _score_config(records: list[dict]) -> dict:
+    synthetic = [r for r in records if r["source"] == "synthetic"]
+    real_ok = [r for r in records if r["source"] == "real" and not r["ambiguous"]]
+    best = (max(THRESHOLDS, key=lambda t, rs=synthetic: score(rs, t)["f1"])
+            if synthetic else DEFAULT_THRESHOLD)
+    return {"threshold": best, **score(synthetic, best),
+            "real": score(real_ok, best) if real_ok else None}
+
+
+def build_sweep_body(all_results: dict[str, dict]) -> str:
+    rows = [
+        [label, f"{r['threshold']:.2f}", f"{r['precision']:.3f}", f"{r['recall']:.3f}",
+         f"**{r['f1']:.3f}**", r["fp"], f"{r['real']['recall']:.3f}" if r["real"] else "-",
+         f"{r['elapsed_s']:.0f}s"]
+        for label, r in all_results.items()
+    ]
+    return "\n".join([
+        "Every config below runs through the real API — real jobs, real "
+        "Postgres, real worker — not a reimplementation. Cached embeddings "
+        "are wiped between configs so each one scores distances it "
+        "actually computed, not a stale cache left by the previous config. "
+        "Threshold is chosen per-config on the synthetic corpus, same rule "
+        "as the desktop comparison in the embedder-comparison section.\n",
+        md_table(["config", "threshold", "precision", "recall", "F1", "FP",
+                  "real recall", "time"], rows),
+    ])
+
+
+def main_sweep() -> None:
+    jobs = discover_jobs()
+    try:
+        requests.get(f"{API}/docs", timeout=10).raise_for_status()
+    except Exception as exc:
+        raise SystemExit(f"API not reachable at {API} ({exc}) — is docker compose up?")
+
+    seeded = seeded_job_ids()
+    unseeded = [j["name"] for j in jobs if j["name"] not in seeded]
+    if unseeded:
+        raise SystemExit(
+            f"{len(unseeded)} job(s) not in the database — run "
+            "benchmarks/seed_jobs.py first"
+        )
+
+    all_results: dict[str, dict] = {}
+    for label, selfie_mode, embedder in SWEEP_CONFIGS:
+        p("=" * 70)
+        p(f"{label}  (SELFIE_DETECTOR_MODE={selfie_mode} EMBEDDER={embedder})")
+        p("=" * 70)
+        _restart_worker(selfie_mode, embedder)
+        wipe_cached_embeddings()
+
+        started = time.time()
+        records: list[dict] = []
+        for job in jobs:
+            records += run_job(job, seeded[job["name"]])
+        elapsed = time.time() - started
+
+        result = _score_config(records)
+        result["elapsed_s"] = elapsed
+        real_txt = f"real recall={result['real']['recall']:.3f}" if result["real"] else "no real jobs"
+        p(f"  threshold {result['threshold']:.2f}: precision={result['precision']:.3f} "
+          f"recall={result['recall']:.3f} F1={result['f1']:.3f} FP={result['fp']}  "
+          f"{real_txt}  ({elapsed:.0f}s)\n")
+        all_results[label] = result
+
+    write_results_section("sweep", "Detector/embedder sweep (real API)",
+                          build_sweep_body(all_results))
 
 
 def main() -> None:
@@ -217,4 +313,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if "--sweep" in sys.argv:
+        main_sweep()
+    else:
+        main()

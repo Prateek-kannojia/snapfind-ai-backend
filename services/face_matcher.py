@@ -66,6 +66,37 @@ def _get_deepface():
     return _deepface_module
 
 
+# ONNX embedder sessions for the sweep (settings.embedder = "mbf" | "r50").
+# Lazily built and cached, same pattern as _get_insightface_app() above.
+_onnx_embedder_sessions: dict[str, Any] = {}
+
+_ONNX_EMBEDDER_PATHS = {
+    "mbf": ("buffalo_sc", "w600k_mbf.onnx"),
+    "r50": ("buffalo_l", "w600k_r50.onnx"),
+}
+
+
+def _get_onnx_embedder_session(name: str):
+    if name not in _onnx_embedder_sessions:
+        import onnxruntime as ort
+
+        pack, filename = _ONNX_EMBEDDER_PATHS[name]
+        path = settings.insightface_home / "models" / pack / filename
+        _onnx_embedder_sessions[name] = ort.InferenceSession(
+            str(path), providers=["CPUExecutionProvider"]
+        )
+    return _onnx_embedder_sessions[name]
+
+
+def _embed_aligned_onnx(aligned: np.ndarray, model: str) -> list[float]:
+    """(x - 127.5) / 127.5, BGR->RGB, NCHW — validated bit-identical against
+    insightface's own reference in benchmarks/compare_embedders.py."""
+    session = _get_onnx_embedder_session(model)
+    blob = cv2.dnn.blobFromImage(aligned, 1.0 / 127.5, (112, 112), (127.5,) * 3, swapRB=True)
+    out = session.run(None, {session.get_inputs()[0].name: blob})[0]
+    return out[0].tolist()
+
+
 class FaceMatchError(AppError):
     """Base for face-matching errors. In practice these are only ever raised
     inside the worker process (run_job_processing -> build_matches_for_job),
@@ -152,7 +183,15 @@ def _event_photo_face_embeddings(object_key: str) -> list[list[float]]:
 
 
 def _embed_aligned(aligned: np.ndarray) -> list[float]:
-    """Embed an already-detected, already-aligned 112x112 face crop."""
+    """Embed an already-detected, already-aligned 112x112 face crop.
+
+    settings.embedder picks the model (default "deepface" = today's
+    production ArcFace; "mbf"/"r50" run the corresponding insightface ONNX
+    model directly). Same crop, same call, regardless of which embeds it —
+    that's what makes the sweep in evaluate_corpus.py a fair comparison.
+    """
+    if settings.embedder in ("mbf", "r50"):
+        return _embed_aligned_onnx(aligned, settings.embedder)
     result = _get_deepface().represent(
         img_path=aligned, model_name=DEFAULT_MODEL, detector_backend="skip", enforce_detection=False
     )
@@ -200,7 +239,8 @@ def _event_photo_embeddings(
 
 
 def _selfie_embedding(image_array: np.ndarray) -> list[float]:
-    """Selfie path: DeepFace + mtcnn, unchanged since the MVP."""
+    """Selfie path: DeepFace + mtcnn, unchanged since the MVP.
+    settings.selfie_detector_mode == "legacy" (the default)."""
     try:
         result = _get_deepface().represent(
             img_path=image_array,
@@ -222,15 +262,47 @@ def _selfie_embedding(image_array: np.ndarray) -> list[float]:
     return result[0]["embedding"]
 
 
+def _selfie_embedding_scrfd(original: np.ndarray, detect_image: np.ndarray) -> list[float]:
+    """Selfie path when settings.selfie_detector_mode == "scrfd": same
+    detector and crop-from-original as event photos, instead of a separate
+    DeepFace+mtcnn call. Face selection picks the largest box — a selfie is
+    expected to contain exactly one intended subject, unlike an event photo
+    where every face is scored (see _event_photo_embeddings)."""
+    from insightface.utils import face_align
+
+    try:
+        app = _get_insightface_app()
+        faces = app.get(detect_image)
+        if not faces:
+            raise SelfieFaceNotDetectedError(
+                "Could not detect a clear face in the uploaded selfie. "
+                "Please upload a clearer front-facing photo."
+            )
+        face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+        scale = original.shape[1] / detect_image.shape[1]
+        kps = face.kps * scale if scale != 1 else face.kps
+        aligned = face_align.norm_crop(original, kps, image_size=112, mode="arcface")
+        return _embed_aligned(aligned)
+    except SelfieFaceNotDetectedError:
+        raise
+    except Exception as exc:
+        raise SelfieFaceNotDetectedError(
+            "Could not generate a face embedding from the uploaded selfie. "
+            "Please upload a clearer front-facing photo."
+        ) from exc
+
+
 def _embedding_for_image(object_key: str, *, is_selfie: bool) -> list[float]:
     """Selfie entry point. Event photos go through
     _event_photo_face_embeddings(), which returns every face rather than one."""
     _validate_image_key(object_key)
     if not is_selfie:
         raise ValueError("event photos use _event_photo_face_embeddings()")
-    return _selfie_embedding(
-        _downscale(_load_image(object_key), settings.selfie_max_dimension)
-    )
+    original = _load_image(object_key)
+    detect_image = _downscale(original, settings.selfie_max_dimension)
+    if settings.selfie_detector_mode == "scrfd":
+        return _selfie_embedding_scrfd(original, detect_image)
+    return _selfie_embedding(detect_image)
 
 
 def _embed_and_score_event_photo(
